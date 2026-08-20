@@ -2,11 +2,16 @@
 
 **If you are Claude reading this:** you're helping **Aaron Klein** make changes to the Yob Invitational trip app. Aaron is not an engineer — he's a co-organizer of the golf trip and one of the app's two admins. That means:
 
-- Explain everything in plain English. No jargon, no assuming he knows what a PR or a build is (explain in one short sentence when it comes up).
-- Handle the full change end-to-end yourself: edit the code, verify it, and open a pull request. Never ask Aaron to run terminal commands.
-- **Always work on a branch and open a pull request. Never push directly to `main`** — every merge to `main` deploys straight to the live site on Render.
-- Before opening the PR, run `npm install --include=dev && npm run build` and make sure it passes. A CI check runs the same build on every PR; tell Aaron to merge only when the check is green.
-- Keep PRs small and describe them in plain English so Zack (the other admin) can skim them.
+- Explain everything in plain English. No jargon, no assuming he knows what a build or a commit is (explain in one short sentence when it comes up).
+- Handle the full change end-to-end yourself: edit the code, verify it, commit, and push. Never ask Aaron to run terminal commands.
+- **You may push directly to `main`** — Zack has okayed this. But `main` deploys straight to the live site on Render, so the deal is strict: **nothing gets pushed until every check below passes.**
+- **Required before every push, no exceptions:**
+  1. `npm install --include=dev` (fresh dependencies, generates the Prisma client)
+  2. `npm run build` — must finish with zero errors. This type-checks and compiles both the client and the server; it is the same check CI runs.
+  3. If tests exist by the time you're reading this (`npm test` or a `test` script in any package.json), run them too and they must pass.
+  4. If anything fails, fix it and re-run. If you can't get it green, stop and tell Aaron to ask Zack — do not push a red build, ever.
+- After pushing, the CI check on GitHub runs the same build. If it comes back red, treat it as an emergency: fix forward immediately or tell Aaron to ping Zack so he can roll back the deploy.
+- Keep each push small and focused, with a plain-English commit message so Zack can skim the history.
 
 ## What this app is
 
@@ -29,12 +34,13 @@ If Aaron asks for something that's really a data change, point him to the right 
 
 ## Guardrails
 
-1. **Never push to `main`** — branch + pull request, always. Merging deploys to production.
-2. **Don't touch `server/prisma/migrations/`** (existing migration files are history — editing them breaks deploys). Database schema changes are a Zack-level task; if a feature needs a new table or column, open the PR with everything else done and flag clearly in the PR description that Zack needs to add the migration.
+1. **Green build before every push** — see the required checklist at the top. Pushing to `main` deploys to production; a broken push takes the app down for the whole group.
+2. **Don't touch `server/prisma/migrations/`** (existing migration files are history — editing them breaks deploys). Database schema changes are a Zack-level task; if a feature needs a new table or column, stop and have Aaron ask Zack rather than pushing a schema change.
 3. **Never commit secrets** — no `.env` files, passwords, or API keys.
-4. **Don't change the score-sync API** (`POST /api/scores/batch` and its fields) without flagging it — phones with the old app version queue scores offline and replay them against the new server.
-5. If a request is ambiguous or risky (changing scoring rules, deleting things), make the safest interpretation and say clearly in the PR what you assumed.
+4. **Don't change the score-sync API** (`POST /api/scores/batch` and its fields) — phones with the old app version queue scores offline and replay them against the new server. If a feature seems to require it, check with Zack first.
+5. **Never force-push, and never rewrite history on `main`.** If you hit a push conflict because Zack pushed something, pull his changes, merge cleanly, re-run the build, then push.
+6. If a request is ambiguous or risky (changing scoring rules, deleting things), make the safest interpretation and tell Aaron clearly what you assumed before pushing.
 
-## After the PR is merged
+## After a push
 
-Render redeploys automatically in a few minutes. Aaron can check the live site afterward. If something looks wrong on the live site, the fastest fix is telling Zack — he can roll back the deploy from the Render dashboard.
+Render redeploys automatically in a few minutes. Have Aaron check the live site afterward to confirm his change looks right. If something looks wrong, the fastest fix is telling Zack — he can roll back the deploy from the Render dashboard.
