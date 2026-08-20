@@ -1,48 +1,54 @@
-import { NextFunction, Request, Response } from 'express';
+import { Request, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import { getDb } from '../store/db';
+import { prisma } from '../store/prisma';
 import { Player } from '../types';
 
 export interface AuthedRequest extends Request {
   user?: Player;
 }
 
-export interface TokenPayload {
-  sub: string;
-}
-
 export function signToken(playerId: string): string {
   return jwt.sign({ sub: playerId }, config.JWT_SECRET, { expiresIn: '30d' });
 }
 
-export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction): void {
+export const requireAuth: RequestHandler = (req: AuthedRequest, res, next) => {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
+  let sub: string;
   try {
-    const payload = jwt.verify(token, config.JWT_SECRET) as TokenPayload;
-    const user = getDb().users.find((u) => u.id === payload.sub);
-    if (!user) {
-      res.status(401).json({ error: 'Unknown user' });
-      return;
-    }
-    req.user = user;
-    next();
+    sub = (jwt.verify(token, config.JWT_SECRET) as { sub: string }).sub;
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
+    return;
   }
-}
+  prisma.player
+    .findUnique({ where: { id: sub } })
+    .then((user) => {
+      if (!user) {
+        res.status(401).json({ error: 'Unknown user' });
+        return;
+      }
+      req.user = user;
+      next();
+    })
+    .catch(next);
+};
 
-export function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction): void {
-  requireAuth(req, res, () => {
+export const requireAdmin: RequestHandler = (req: AuthedRequest, res, next) => {
+  requireAuth(req, res, (err?: unknown) => {
+    if (err) {
+      next(err);
+      return;
+    }
     if (!req.user?.isAdmin) {
       res.status(403).json({ error: 'Admin access required' });
       return;
     }
     next();
   });
-}
+};

@@ -11,6 +11,15 @@ export class HttpError extends Error {
   }
 }
 
+/** Express 4 doesn't catch rejected promises in handlers — wrap async ones. */
+export function asyncHandler<Req extends Request = Request>(
+  fn: (req: Req, res: Response, next: NextFunction) => Promise<unknown>,
+) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    void fn(req as Req, res, next).catch(next);
+  };
+}
+
 export function apiNotFound(_req: Request, res: Response): void {
   res.status(404).json({ error: 'Not found' });
 }

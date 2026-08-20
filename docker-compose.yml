@@ -1,0 +1,16 @@
+# Local Postgres for development (skip if you already run Postgres locally —
+# just point DATABASE_URL in .env at it instead).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: yob
+      POSTGRES_PASSWORD: yob
+      POSTGRES_DB: yob_invitational
+    ports:
+      - '5432:5432'
+    volumes:
+      - yob-pgdata:/var/lib/postgresql/data
+
+volumes:
+  yob-pgdata:

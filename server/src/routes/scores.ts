@@ -1,18 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
-import { HttpError } from '../middleware/error';
-import { getDb, saveDb } from '../store/db';
-import { scoreKey } from '../services/scoring';
+import { asyncHandler, HttpError } from '../middleware/error';
+import { prisma } from '../store/prisma';
 
 export const scoresRouter = Router();
 
-scoresRouter.get('/', requireAuth, (req, res) => {
-  const roundId = String(req.query.roundId ?? '');
-  if (!roundId) throw new HttpError(400, 'roundId is required');
-  const db = getDb();
-  res.json(db.scores.filter((s) => s.roundId === roundId));
-});
+scoresRouter.get(
+  '/',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const roundId = String(req.query.roundId ?? '');
+    if (!roundId) throw new HttpError(400, 'roundId is required');
+    const scores = await prisma.score.findMany({ where: { roundId } });
+    res.json(scores.map((s) => ({ ...s, updatedAt: s.updatedAt.getTime() })));
+  }),
+);
 
 const ScoreEntry = z.object({
   roundId: z.string(),
@@ -31,40 +34,44 @@ const BatchSchema = z.object({ scores: z.array(ScoreEntry).min(1).max(500) });
  * here. Last write wins by updatedAt, so a stale offline entry never
  * clobbers a newer edit made from another phone.
  */
-scoresRouter.post('/batch', requireAuth, (req: AuthedRequest, res) => {
-  const body = BatchSchema.parse(req.body);
-  const db = getDb();
-  let applied = 0;
-  for (const entry of body.scores) {
-    if (!db.rounds.some((r) => r.id === entry.roundId)) continue;
-    const idx = db.scores.findIndex(
-      (s) =>
-        s.roundId === entry.roundId &&
-        scoreKey(s.entityType, s.entityId, s.hole) ===
-          scoreKey(entry.entityType, entry.entityId, entry.hole),
+scoresRouter.post(
+  '/batch',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = BatchSchema.parse(req.body);
+    const roundIds = new Set(
+      (await prisma.round.findMany({ select: { id: true } })).map((r) => r.id),
     );
-    const existing = idx >= 0 ? db.scores[idx] : null;
-    if (existing && existing.updatedAt > entry.updatedAt) continue; // newer edit already stored
-    if (entry.strokes == null) {
-      if (idx >= 0) {
-        db.scores.splice(idx, 1);
+    let applied = 0;
+    await prisma.$transaction(async (tx) => {
+      for (const entry of body.scores) {
+        if (!roundIds.has(entry.roundId)) continue;
+        const key = {
+          roundId: entry.roundId,
+          entityType: entry.entityType,
+          entityId: entry.entityId,
+          hole: entry.hole,
+        };
+        const updatedAt = new Date(entry.updatedAt);
+        if (entry.strokes == null) {
+          const deleted = await tx.score.deleteMany({
+            where: { ...key, updatedAt: { lte: updatedAt } },
+          });
+          applied += deleted.count;
+          continue;
+        }
+        const existing = await tx.score.findUnique({
+          where: { roundId_entityType_entityId_hole: key },
+        });
+        if (existing && existing.updatedAt > updatedAt) continue; // newer edit already stored
+        await tx.score.upsert({
+          where: { roundId_entityType_entityId_hole: key },
+          update: { strokes: entry.strokes, updatedAt, updatedBy: req.user!.id },
+          create: { ...key, strokes: entry.strokes, updatedAt, updatedBy: req.user!.id },
+        });
         applied += 1;
       }
-      continue;
-    }
-    const record = {
-      roundId: entry.roundId,
-      entityType: entry.entityType,
-      entityId: entry.entityId,
-      hole: entry.hole,
-      strokes: entry.strokes,
-      updatedAt: entry.updatedAt,
-      updatedBy: req.user!.id,
-    };
-    if (idx >= 0) db.scores[idx] = record;
-    else db.scores.push(record);
-    applied += 1;
-  }
-  saveDb();
-  res.json({ ok: true, applied });
-});
+    });
+    res.json({ ok: true, applied });
+  }),
+);

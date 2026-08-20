@@ -1,4 +1,7 @@
-import { Course, DB, Hole, Player, Round } from '../types';
+import { Prisma } from '@prisma/client';
+import { logger } from '../logger';
+import { Course, Hole, Player, Round } from '../types';
+import { prisma } from './prisma';
 
 function holes18(pars: number[], strokeIndexes: number[]): Hole[] {
   return pars.map((par, i) => ({ number: i + 1, par, strokeIndex: strokeIndexes[i] }));
@@ -182,17 +185,25 @@ export function seedPlayers(): Player[] {
   ];
 }
 
-export function seed(): DB {
-  return {
-    users: seedPlayers(),
-    courses: seedCourses(),
-    rounds: seedRounds(),
-    pairings: [],
-    ryderTeams: [
-      { id: 'A', name: 'Team A', color: '#1d4ed8', captainId: null, playerIds: [] },
-      { id: 'B', name: 'Team B', color: '#b91c1c', captainId: null, playerIds: [] },
-    ],
-    matches: [],
-    scores: [],
-  };
+/** One-time bootstrap: populate an empty database with the 2026 trip. */
+export async function ensureSeeded(): Promise<void> {
+  const playerCount = await prisma.player.count();
+  if (playerCount > 0) return;
+  await prisma.$transaction([
+    prisma.player.createMany({ data: seedPlayers() }),
+    prisma.course.createMany({
+      data: seedCourses().map((c) => ({
+        ...c,
+        holes: c.holes as unknown as Prisma.InputJsonValue,
+      })),
+    }),
+    prisma.round.createMany({ data: seedRounds() }),
+    prisma.ryderTeam.createMany({
+      data: [
+        { id: 'A', name: 'Team A', color: '#1d4ed8', captainId: null, playerIds: [] },
+        { id: 'B', name: 'Team B', color: '#b91c1c', captainId: null, playerIds: [] },
+      ],
+    }),
+  ]);
+  logger.info('seeded database with the 2026 trip');
 }

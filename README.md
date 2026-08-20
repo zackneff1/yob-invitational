@@ -23,43 +23,52 @@ Trip app for the annual 12-man Ryder Cup–style golf trip. 2026 edition: **St. 
 
 ## Stack
 
-npm-workspaces monorepo, deployed to Render as a single web service:
+npm-workspaces monorepo, deployed to Render as a web service + managed Postgres:
 
 ```
 /client   React 18 + TypeScript + Vite · React Router · TanStack Query (persisted)
 /server   Express + TypeScript · helmet · compression · pino · zod config · JWT auth
-          serves /api/* and the built client (SPA fallback)
+          Prisma + PostgreSQL · serves /api/* and the built client (SPA fallback)
 ```
 
-Data lives in a JSON file store (`DATA_DIR/db.json`) behind a small store/services layer, so swapping in Prisma/Postgres later is a contained change (`server/src/store`, `server/src/services`).
+The schema lives in `server/prisma/schema.prisma` with versioned migrations in `server/prisma/migrations/`. On boot the server applies pending migrations (`prisma migrate deploy` in the start script) and seeds an empty database with the 2026 trip. Read-side scoring stays in pure functions over a full snapshot (`server/src/store/loadDb.ts`) — the whole event is a few thousand rows — while every write goes through Prisma transactions.
 
 ## Local development
 
+You need a local Postgres. Either use one you already run, or:
+
 ```bash
-npm install
-cp .env.example .env        # optional — sensible dev defaults are built in
-npm run dev                 # server on :3001, client on :5173 (proxies /api)
+docker compose up -d        # Postgres 16 on :5432 (user/pass/db from docker-compose.yml)
 ```
 
-Open http://localhost:5173, claim a profile (invite code defaults to `yob2026`), and go. The dev data store is created at `server/data/db.json` (gitignored) — delete it to re-seed.
+Then:
 
-Other scripts: `npm run build` (client then server), `npm start` (compiled server), `npm run typecheck`, `npm run lint`.
+```bash
+npm install                                   # also generates the Prisma client
+cp server/.env.example server/.env            # set DATABASE_URL for your Postgres
+npm run db:deploy -w server                   # create the tables (one time)
+npm run dev                                   # server :3001, client :5173 (proxies /api)
+```
+
+Open http://localhost:5173, claim a profile (invite code defaults to `yob2026`), and go. The database seeds itself with the 12 players/courses/rounds on first boot.
+
+Other scripts: `npm run build`, `npm start`, `npm run typecheck`, `npm run lint`, and in `server/`: `db:migrate` (create a new migration after schema changes), `db:studio` (browse the DB).
 
 ## Deploying to Render
 
-The repo ships a `render.yaml` blueprint: one Node 20 web service, `npm install --include=dev && npm run build`, `npm start`, health check at `/api/health`, a generated `JWT_SECRET`, and a 1 GB persistent disk mounted at `/var/data` for the JSON store.
+The `render.yaml` blueprint defines both pieces: a **Postgres database** (`yob-db`, basic-256mb — daily backups included) and a **Node 20 web service** wired to it via `DATABASE_URL`, with health check at `/api/health` and a generated `JWT_SECRET`. Migrations run automatically on every deploy before the server starts.
 
 1. Push to GitHub (already wired to this repo).
-2. In the [Render dashboard](https://dashboard.render.com): **New → Blueprint**, pick the `yob-invitational` repo, and click **Apply**. Render reads `render.yaml` and creates the service.
+2. In the [Render dashboard](https://dashboard.render.com): **New → Blueprint**, pick the `yob-invitational` repo, and click **Apply**. Render creates the database and the service together.
 3. Wait for the first deploy to go green (health check `/api/health`).
 4. Open the service URL, claim the Neffy profile, and set things up in Admin.
 
 Notes:
 
-- The persistent disk requires a **paid instance (Starter)**. On the free tier the JSON store is wiped on every deploy/restart — fine for kicking the tires, not for the trip.
 - `PORT` is injected by Render; the server reads it from the environment. Don't set it manually.
 - Change `INVITE_CODE` in the service's environment settings if you want something other than `yob2026`.
-- Redeploys are automatic on push to `main`.
+- Redeploys are automatic on push to `main`. Data lives in Postgres, so deploys/restarts never touch it.
+- If you ever change the schema: edit `schema.prisma`, run `npm run db:migrate -w server` locally (creates + applies a migration), commit the migration folder, push — Render applies it on deploy.
 
 ## API sketch
 
