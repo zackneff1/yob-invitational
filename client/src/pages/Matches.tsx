@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { ComputedMatch } from '../api/types';
 import { useRoundLeaderboard, useTrip } from '../hooks';
+import { handicapRule } from '../roundRules';
 import { TeeZone, withZone, zoneFor } from '../teeTimes';
 
 function fmtToPar(toPar: number): string {
@@ -81,6 +82,9 @@ export function MatchesPage() {
         <>
           <h2>{board.data.round.name}</h2>
           <p className="muted">{board.data.round.formatLabel} — winners are the captains.</p>
+          <p className="rule-line">
+            <strong>Handicaps:</strong> {handicapRule(board.data.round)}
+          </p>
           {board.data.rows.length === 0 && (
             <p className="muted">No pairings drawn yet. Admin runs the random draw.</p>
           )}
@@ -123,6 +127,9 @@ export function MatchesPage() {
         <>
           <h2>{board.data.round.name}</h2>
           <p className="muted">{board.data.round.formatLabel}</p>
+          <p className="rule-line">
+            <strong>Handicaps:</strong> {handicapRule(board.data.round)}
+          </p>
           {board.data.matches.length === 0 && (
             <p className="muted">Matches not set yet — captains submit lineups to the admins.</p>
           )}

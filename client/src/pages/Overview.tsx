@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { descriptionWithoutHandicapRule, handicapRule } from '../roundRules';
 import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
 
@@ -61,7 +62,10 @@ export function OverviewPage() {
               <p>
                 <strong>{round.formatLabel}</strong>
               </p>
-              <p className="muted">{round.description}</p>
+              <p className="muted">{descriptionWithoutHandicapRule(round.description)}</p>
+              <p className="rule-line">
+                <strong>Handicaps:</strong> {handicapRule(round)}
+              </p>
               <p>
                 <strong>Tee times:</strong>{' '}
                 {withZone(round.teeTimes.join(' · '), zoneFor(course))}
@@ -114,8 +118,11 @@ export function OverviewPage() {
           </tbody>
         </table>
         <p className="muted small">
-          Columns show playing handicap per round (course handicap × allowance). Indexes get
-          updated right before the trip in Admin.
+          Columns show playing handicap per round (course handicap × allowance) —{' '}
+          <strong>before</strong> strokes come off the low man, so they are not the strokes you
+          actually receive. Your real strokes show as * marks on the score entry page, which
+          depend on the field in Round 1 and on your match in Rounds 2–5. Indexes get updated
+          right before the trip in Admin.
         </p>
       </section>
     </div>

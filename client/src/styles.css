@@ -413,6 +413,16 @@ button.ghost {
 .totals-row td {
   border-top: 2px solid var(--border);
 }
+/* Handicap rule for a round — derived from the scoring code, not stored text. */
+.rule-line {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.rule-line strong {
+  color: var(--green);
+}
+
 /* Timezone warning on rounds played outside Mountain time. */
 .tz-note {
   margin: 0.35rem 0 0;
