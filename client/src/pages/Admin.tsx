@@ -468,8 +468,9 @@ function CoursesTab({ trip, onSaved, notify }: TabProps) {
     <section>
       <h2>Courses</h2>
       <p className="muted small">
-        Seeded scorecards are placeholders — set the real tees, rating, slope, par, and stroke
-        indexes from the printed cards before the trip.
+        Seeded scorecards are placeholders — set the real tees, rating, slope, par, stroke
+        indexes, and yardages from the printed cards before the trip. Yardages are blank until
+        you enter them, and show as “—” on the score entry page.
       </p>
       {trip.courses.map((course) => {
         const draft = draftOf(course);
@@ -533,6 +534,26 @@ function CoursesTab({ trip, onSaved, notify }: TabProps) {
                           onChange={(e) => {
                             const holes = [...draft.holes];
                             holes[i] = { ...h, par: Number(e.target.value) };
+                            patch(course, { holes });
+                          }}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <td>Yards</td>
+                    {draft.holes.map((h, i) => (
+                      <td key={h.number}>
+                        <input
+                          type="number"
+                          min={30}
+                          max={800}
+                          placeholder="—"
+                          value={h.yards ?? ''}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const holes = [...draft.holes];
+                            holes[i] = { ...h, yards: raw === '' ? undefined : Number(raw) };
                             patch(course, { holes });
                           }}
                         />

@@ -9,6 +9,9 @@ interface Column {
   entityType: 'player' | 'side';
   entityId: string;
   label: string;
+  /** Strokes this player (or scramble side) receives over the round, after the
+   *  round's allowance and any play-off-the-low-man reduction. */
+  effectiveHandicap: number;
 }
 
 interface Group {
@@ -17,12 +20,47 @@ interface Group {
   columns: Column[];
 }
 
+/**
+ * Strokes received on one hole for a given handicap, allocated by stroke index.
+ * Hand-mirrored from `strokesOnHole` in server/src/services/scoring.ts — the
+ * client shares no module with the server, so if that math ever changes this
+ * copy has to change with it. Display only; the server still does the scoring.
+ */
+function strokesOnHole(ph: number, strokeIndex: number, holeCount: number): number {
+  if (ph === 0) return 0;
+  const abs = Math.abs(ph);
+  const base = Math.floor(abs / holeCount);
+  const rem = abs % holeCount;
+  const extra = ph > 0 ? strokeIndex <= rem : strokeIndex > holeCount - rem;
+  return (base + (extra ? 1 : 0)) * Math.sign(ph);
+}
+
 /** Build the score-entry groups for a round: tee-time groups for the
  *  qualifier, one group per match for Ryder Cup rounds. */
 function buildGroups(trip: Trip, roundId: string): Group[] {
   const round = trip.rounds.find((r) => r.id === roundId);
   if (!round) return [];
   const nameOf = (id: string) => trip.players.find((p) => p.id === id)?.name ?? id;
+  const hcpOf = (id: string) => round.courseHandicaps.find((c) => c.playerId === id);
+  const playingOf = (id: string) => hcpOf(id)?.playingHandicap ?? 0;
+  const courseHcpOf = (id: string) => hcpOf(id)?.courseHandicap ?? 0;
+
+  /** Strokes each player gets within one group. In play-off-the-low-man
+   *  formats everyone is reduced by the lowest playing handicap in the group,
+   *  matching how the server scores the round. */
+  const effectiveOf = (playerIds: string[]): Map<string, number> => {
+    const phs = playerIds.map(playingOf);
+    const low = round.playOffLow && phs.length > 1 ? Math.min(...phs) : 0;
+    return new Map(playerIds.map((id, i) => [id, phs[i] - low]));
+  };
+
+  /** Scramble team handicap: 35% of the low course handicap + 15% of the high. */
+  const teamHandicapOf = (playerIds: string[]): number => {
+    const chs = playerIds.map(courseHcpOf).sort((a, b) => a - b);
+    const low = chs[0] ?? 0;
+    const high = chs[chs.length - 1] ?? 0;
+    return Math.round(0.35 * low + 0.15 * high);
+  };
 
   if (round.format === 'bestball-qualifier') {
     const pairings = trip.pairings.filter((p) => p.roundId === roundId);
@@ -34,13 +72,15 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
     return [...byTime.entries()].map(([teeTime, group]) => ({
       id: `tee-${teeTime}`,
       label: `${teeTime} — ${group.map((g) => g.name).join(' & ')}`,
-      columns: group.flatMap((g) =>
-        g.playerIds.map((pid) => ({
+      columns: group.flatMap((g) => {
+        const eff = effectiveOf(g.playerIds);
+        return g.playerIds.map((pid) => ({
           entityType: 'player' as const,
           entityId: pid,
           label: nameOf(pid),
-        })),
-      ),
+          effectiveHandicap: eff.get(pid) ?? 0,
+        }));
+      }),
     }));
   }
 
@@ -50,22 +90,41 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
   return matches.map((m, i) => {
     const label = `Match ${i + 1}: ${m.sideA.map(nameOf).join('/')} vs ${m.sideB.map(nameOf).join('/')}`;
     if (round.format === 'scramble') {
+      // Sides play off the lower team handicap, as the server does.
+      const thA = teamHandicapOf(m.sideA);
+      const thB = teamHandicapOf(m.sideB);
+      const low = Math.min(thA, thB);
       return {
         id: m.id,
         label,
         columns: [
-          { entityType: 'side' as const, entityId: `${m.id}:A`, label: teamName('A') },
-          { entityType: 'side' as const, entityId: `${m.id}:B`, label: teamName('B') },
+          {
+            entityType: 'side' as const,
+            entityId: `${m.id}:A`,
+            label: teamName('A'),
+            effectiveHandicap: thA - low,
+          },
+          {
+            entityType: 'side' as const,
+            entityId: `${m.id}:B`,
+            label: teamName('B'),
+            effectiveHandicap: thB - low,
+          },
         ],
       };
     }
+    // Four-ball, Stableford and singles: strokes are worked out across the
+    // whole match, not per side.
+    const playerIds = [...m.sideA, ...m.sideB];
+    const eff = effectiveOf(playerIds);
     return {
       id: m.id,
       label,
-      columns: [...m.sideA, ...m.sideB].map((pid) => ({
+      columns: playerIds.map((pid) => ({
         entityType: 'player' as const,
         entityId: pid,
         label: nameOf(pid),
+        effectiveHandicap: eff.get(pid) ?? 0,
       })),
     };
   });
@@ -107,6 +166,13 @@ export function ScoreEntryPage() {
   }, [groups, groupId, auth?.player.id]);
 
   const group = groups.find((g) => g.id === groupId);
+
+  // Only show a total distance once every hole has a yardage — a partial sum
+  // would read like a real course length and be wrong.
+  const totalYards =
+    course && course.holes.every((h) => typeof h.yards === 'number')
+      ? course.holes.reduce((sum, h) => sum + (h.yards ?? 0), 0)
+      : null;
 
   const valueFor = (col: Column, hole: number): number | '' => {
     const key = `${col.entityType}|${col.entityId}|${hole}`;
@@ -176,6 +242,23 @@ export function ScoreEntryPage() {
         {round?.name} · {round?.formatLabel}
       </p>
 
+      {course && (
+        <div className="course-head">
+          <h2>{course.name}</h2>
+          <p className="muted small">
+            {[
+              course.location,
+              course.tee ? `${course.tee} tees` : null,
+              totalYards ? `${totalYards.toLocaleString()} yds` : null,
+              `par ${course.par}`,
+              `${course.rating}/${course.slope}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        </div>
+      )}
+
       {groups.length === 0 && (
         <p className="muted">
           No groups yet for this round — pairings/matches get set up by the admins first.
@@ -199,6 +282,7 @@ export function ScoreEntryPage() {
               <tr>
                 <th>Hole</th>
                 <th>Par</th>
+                <th>Yds</th>
                 {group.columns.map((c) => (
                   <th key={c.entityId}>{c.label}</th>
                 ))}
@@ -212,23 +296,46 @@ export function ScoreEntryPage() {
                     <span className="muted small"> si{hole.strokeIndex}</span>
                   </td>
                   <td>{hole.par}</td>
-                  {group.columns.map((c) => (
-                    <td key={c.entityId}>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={20}
-                        value={valueFor(c, hole.number)}
-                        onChange={(e) => setScore(c, hole.number, e.target.value)}
-                      />
-                    </td>
-                  ))}
+                  <td className="muted small">{hole.yards ?? '—'}</td>
+                  {group.columns.map((c) => {
+                    const strokes = strokesOnHole(
+                      c.effectiveHandicap,
+                      hole.strokeIndex,
+                      course.holes.length,
+                    );
+                    return (
+                      <td key={c.entityId}>
+                        <div className="score-cell">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={20}
+                            value={valueFor(c, hole.number)}
+                            onChange={(e) => setScore(c, hole.number, e.target.value)}
+                          />
+                          <span
+                            className="stroke-marks"
+                            title={
+                              strokes > 0
+                                ? `${c.label} gets ${strokes} stroke${strokes > 1 ? 's' : ''} here`
+                                : undefined
+                            }
+                          >
+                            {strokes > 0 ? '*'.repeat(strokes) : ''}
+                          </span>
+                        </div>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
               <tr className="totals-row">
                 <td colSpan={2}>
                   <strong>Total</strong>
+                </td>
+                <td className="muted small">
+                  <strong>{totalYards ? totalYards.toLocaleString() : '—'}</strong>
                 </td>
                 {group.columns.map((c) => {
                   const total = course.holes.reduce((sum, h) => {
@@ -245,6 +352,12 @@ export function ScoreEntryPage() {
             </tbody>
           </table>
         </div>
+      )}
+      {group && (
+        <p className="muted small">
+          <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.
+          Yardages show “—” until an admin enters them in Admin → Courses.
+        </p>
       )}
       <p className="muted small">
         Scores save on your phone instantly and sync when there’s signal — the “unsynced” badge up

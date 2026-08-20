@@ -413,6 +413,30 @@ button.ghost {
 .totals-row td {
   border-top: 2px solid var(--border);
 }
+.course-head {
+  margin: 0.75rem 0 0.25rem;
+}
+.course-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.course-head p {
+  margin: 0.15rem 0 0;
+}
+/* Score box plus its stroke markers. The marker span keeps its width even when
+   empty so every column stays lined up down the card. */
+.score-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.stroke-marks {
+  display: inline-block;
+  min-width: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--green);
+}
 
 /* admin */
 .pairing-row,

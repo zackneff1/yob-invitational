@@ -78,6 +78,7 @@ const CourseUpdate = z.object({
         number: z.number().int().min(1).max(18),
         par: z.number().int().min(3).max(6),
         strokeIndex: z.number().int().min(1).max(18),
+        yards: z.number().int().min(30).max(800).optional(),
       }),
     )
     .optional(),

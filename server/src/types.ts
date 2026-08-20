@@ -12,6 +12,9 @@ export interface Hole {
   par: number;
   /** Stroke index (handicap ranking) of the hole, 1 = hardest. */
   strokeIndex: number;
+  /** Hole length in yards from the tees being played. Optional — the seeded
+   *  placeholder cards have no yardages until an admin enters them. */
+  yards?: number;
 }
 
 export interface Course {

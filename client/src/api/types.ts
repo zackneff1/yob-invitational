@@ -13,6 +13,8 @@ export interface Hole {
   number: number;
   par: number;
   strokeIndex: number;
+  /** Hole length in yards; undefined until an admin fills it in. */
+  yards?: number;
 }
 
 export interface Course {
