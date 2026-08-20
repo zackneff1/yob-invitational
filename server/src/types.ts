@@ -43,7 +43,12 @@ export interface Round {
   formatLabel: string;
   /** Handicap allowance applied to each player's course handicap (e.g. 0.85). */
   allowance: number;
-  /** Match-play style formats play off the low handicap in the match. */
+  /**
+   * Retained for schema compatibility but no longer consulted: every format now
+   * plays off the low man. The scope is what varies — the full 12-man field for
+   * the qualifier, the players in a match for Rounds 2-5 — and that is decided
+   * by which players the leaderboard hands to handicapInfoFor.
+   */
   playOffLow: boolean;
   /** Number of Ryder Cup matches in this round (0 for the qualifier). */
   matchCount: number;

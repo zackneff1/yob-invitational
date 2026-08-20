@@ -41,6 +41,7 @@ export interface Round {
   format: RoundFormat;
   formatLabel: string;
   allowance: number;
+  /** Unused — strokes always come off the low man; see the server's Round type. */
   playOffLow: boolean;
   matchCount: number;
   description: string;

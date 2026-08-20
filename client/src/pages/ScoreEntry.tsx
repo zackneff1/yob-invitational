@@ -46,12 +46,12 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
   const playingOf = (id: string) => hcpOf(id)?.playingHandicap ?? 0;
   const courseHcpOf = (id: string) => hcpOf(id)?.courseHandicap ?? 0;
 
-  /** Strokes each player gets within one group. In play-off-the-low-man
-   *  formats everyone is reduced by the lowest playing handicap in the group,
-   *  matching how the server scores the round. */
+  /** Strokes each player gets, off the low man in the group passed in — the
+   *  whole field for the qualifier, the match for Rounds 2-5. Mirrors
+   *  handicapInfoFor on the server so these markers match the leaderboard. */
   const effectiveOf = (playerIds: string[]): Map<string, number> => {
     const phs = playerIds.map(playingOf);
-    const low = round.playOffLow && phs.length > 1 ? Math.min(...phs) : 0;
+    const low = phs.length > 1 ? Math.min(...phs) : 0;
     return new Map(playerIds.map((id, i) => [id, phs[i] - low]));
   };
 
@@ -71,18 +71,19 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
       byTime.set(key, [...(byTime.get(key) ?? []), p]);
     }
     const zone = zoneFor(trip.courses.find((c) => c.id === round.courseId));
+    // Off the low man across the whole 12-man field, not each pair.
+    const fieldEff = effectiveOf([...new Set(pairings.flatMap((p) => p.playerIds))]);
     return [...byTime.entries()].map(([teeTime, group]) => ({
       id: `tee-${teeTime}`,
       label: `${withZone(teeTime, zone)} — ${group.map((g) => g.name).join(' & ')}`,
-      columns: group.flatMap((g) => {
-        const eff = effectiveOf(g.playerIds);
-        return g.playerIds.map((pid) => ({
+      columns: group.flatMap((g) =>
+        g.playerIds.map((pid) => ({
           entityType: 'player' as const,
           entityId: pid,
           label: nameOf(pid),
-          effectiveHandicap: eff.get(pid) ?? 0,
-        }));
-      }),
+          effectiveHandicap: fieldEff.get(pid) ?? 0,
+        })),
+      ),
     }));
   }
 
@@ -362,7 +363,9 @@ export function ScoreEntryPage() {
       {group && (
         <p className="muted small">
           <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.
-          Yardages show “—” until an admin enters them in Admin → Courses.
+          Strokes come off the low man — the whole 12-man field in Round 1, your match in
+          Rounds 2–5 — so the lowest handicap gets none. Yardages show “—” until an admin enters
+          them in Admin → Courses.
         </p>
       )}
       <p className="muted small">

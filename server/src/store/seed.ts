@@ -20,10 +20,10 @@ export function seedRounds(): Round[] {
       format: 'bestball-qualifier',
       formatLabel: 'Two-man best ball, stroke play (85% handicap)',
       allowance: 0.85,
-      playOffLow: false,
+      playOffLow: true,
       matchCount: 0,
       description:
-        'Randomly drawn two-man best ball teams, net stroke play at 85% of course handicap. The winning team become the two captains. Live draft after the round.',
+        'Randomly drawn two-man best ball teams, net stroke play at 85% of course handicap, strokes off the low man across the full 12-man field. The winning team become the two captains. Live draft after the round.',
     },
     {
       id: 'r2-coral-canyon',
@@ -50,10 +50,10 @@ export function seedRounds(): Round[] {
       format: 'stableford',
       formatLabel: 'Two-man aggregate Stableford — 3 matches, 1 pt each',
       allowance: 0.95,
-      playOffLow: false,
+      playOffLow: true,
       matchCount: 3,
       description:
-        'Both partners score Stableford points on every hole (net double bogey 0, bogey 1, par 2, birdie 3, eagle 4). Team total decides the match. 95% allowance.',
+        'Both partners score Stableford points on every hole (net double bogey 0, bogey 1, par 2, birdie 3, eagle 4). Team total decides the match. 95% allowance, strokes off the low man in the match.',
     },
     {
       id: 'r4-sh-links',

@@ -29,13 +29,26 @@ export function qualifierLeaderboard(db: DB, round: Round): QualifierRow[] {
   const map = buildScoreMap(db.scores, round.id);
   const n = course.holes.length;
 
-  const rows = db.pairings
-    .filter((p) => p.roundId === round.id)
+  const pairings = db.pairings.filter((p) => p.roundId === round.id);
+
+  // Strokes come off the low man across the WHOLE field, not each pair: every
+  // player in the qualifier is reduced by the lowest playing handicap among all
+  // twelve, so the low man plays off scratch and everyone else gets the
+  // difference. Computed once here and shared by every pairing below.
+  const fieldPlayers = [...new Set(pairings.flatMap((p) => p.playerIds))]
+    .map((id) => db.users.find((u) => u.id === id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p));
+  const fieldInfos = handicapInfoFor(fieldPlayers, round, course);
+  const infoFor = new Map(fieldInfos.map((i) => [i.playerId, i]));
+
+  const rows = pairings
     .map((pairing) => {
       const players = pairing.playerIds
         .map((id) => db.users.find((u) => u.id === id))
         .filter((p): p is NonNullable<typeof p> => Boolean(p));
-      const infos = handicapInfoFor(players, round, course);
+      const infos = players
+        .map((p) => infoFor.get(p.id))
+        .filter((i): i is NonNullable<typeof i> => Boolean(i));
       let net = 0;
       let par = 0;
       let thru = 0;

@@ -72,8 +72,14 @@ export interface PlayerHandicapInfo {
 
 /**
  * Per-player handicap info for a group of players in a round.
- * When the round plays off the low man, every player's effective strokes are
- * reduced by the lowest playing handicap in the group.
+ *
+ * Every format plays off the low man: each player's effective strokes are
+ * reduced by the lowest playing handicap in the group passed in. The *scope*
+ * of that group is what differs by round, and it is the caller's job to pass
+ * the right one — the whole 12-man field for the Round 1 qualifier, and the
+ * players in a single match for Rounds 2-5.
+ *
+ * (`round.playOffLow` is no longer consulted; see the note on the Round type.)
  */
 export function handicapInfoFor(players: Player[], round: Round, course: Course): PlayerHandicapInfo[] {
   const infos = players.map((p) => {
@@ -88,9 +94,9 @@ export function handicapInfoFor(players: Player[], round: Round, course: Course)
       effectiveHandicap: ph,
     };
   });
-  if (round.playOffLow && infos.length > 1) {
-    const min = Math.min(...infos.map((i) => i.playingHandicap));
-    for (const i of infos) i.effectiveHandicap = i.playingHandicap - min;
+  if (infos.length > 1) {
+    const low = Math.min(...infos.map((i) => i.playingHandicap));
+    for (const i of infos) i.effectiveHandicap = i.playingHandicap - low;
   }
   return infos;
 }
