@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# local data store (JSON DB)
+server/data/
+data/
+
+# misc
+*.log
+.DS_Store
