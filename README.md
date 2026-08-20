@@ -19,7 +19,7 @@ Trip app for the annual 12-man Ryder Cup–style golf trip. 2026 edition: **St. 
 - **Offline-first** — scores save to the phone instantly (localStorage queue) and sync whenever signal returns; last-write-wins by timestamp so a stale offline replay never clobbers a newer edit. Leaderboards render from a persisted cache, and a service worker keeps the app shell loadable with no signal.
 - **Admin tools** — edit handicaps, run the Round 1 random draw (or hand-edit pairings), set the drafted teams + captains, set match lineups per round, override match results, reset a player's login, and fix course data.
 
-> **Before the trip:** the seeded scorecards (par, stroke index, rating, slope, tees) are **placeholders**. Update them from the real scorecards in **Admin → Courses**, and refresh handicap indexes in **Admin → Players**.
+> **Before the trip:** the seeded scorecards carry the real card data for the tees the group is playing (see `COURSES.md`), but **seeding only fills a brand-new empty database** — it never touches a site that already has players. To load them into a running site, run `server/scripts/push-courses.ts` (dry run by default) or type them into **Admin → Courses**. Two numbers still need a human check: Coral Canyon's back-nine yardage and Sand Hollow Links' 9-hole rating. Refresh handicap indexes in **Admin → Players**.
 
 ## Stack
 

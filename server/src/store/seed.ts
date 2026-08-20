@@ -1,83 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { logger } from '../logger';
-import { Course, Hole, Player, Round } from '../types';
+import { Course, Player, Round } from '../types';
+import { courses2026 } from './courses2026';
 import { prisma } from './prisma';
 
-function holes18(pars: number[], strokeIndexes: number[]): Hole[] {
-  return pars.map((par, i) => ({ number: i + 1, par, strokeIndex: strokeIndexes[i] }));
-}
-
-// Placeholder scorecards. Par/stroke-index/rating/slope MUST be updated from the
-// actual scorecards (for the tees you're playing) in the Admin → Courses tab
-// before the trip. The math is wired up; only the numbers need correcting.
-const GENERIC_PARS = [4, 5, 3, 4, 4, 3, 5, 4, 4, 5, 4, 3, 4, 4, 5, 3, 4, 4]; // 36/36 = 72
-const GENERIC_SI = [11, 5, 17, 1, 9, 15, 7, 3, 13, 6, 12, 18, 2, 8, 4, 16, 10, 14];
-
-const PLACEHOLDER_NOTE =
-  'PLACEHOLDER scorecard — update par, stroke indexes, rating, and slope from the real card for your tees in Admin → Courses.';
-
 export function seedCourses(): Course[] {
-  return [
-    {
-      id: 'conestoga',
-      name: 'Conestoga Golf Club',
-      location: 'Mesquite, NV',
-      tee: 'TBD',
-      par: 72,
-      rating: 70.5,
-      slope: 131,
-      holes: holes18(GENERIC_PARS, GENERIC_SI),
-      notes: PLACEHOLDER_NOTE,
-    },
-    {
-      id: 'coral-canyon',
-      name: 'Coral Canyon Golf Course',
-      location: 'Washington, UT',
-      tee: 'TBD',
-      par: 72,
-      rating: 70.0,
-      slope: 126,
-      holes: holes18(GENERIC_PARS, GENERIC_SI),
-      notes: PLACEHOLDER_NOTE,
-    },
-    {
-      id: 'ledges',
-      name: 'The Ledges Golf Club',
-      location: 'St. George, UT',
-      tee: 'TBD',
-      par: 72,
-      rating: 70.3,
-      slope: 129,
-      holes: holes18(GENERIC_PARS, GENERIC_SI),
-      notes: PLACEHOLDER_NOTE,
-    },
-    {
-      id: 'sand-hollow-links',
-      name: 'Sand Hollow Resort — Links 9',
-      location: 'Hurricane, UT',
-      tee: 'TBD',
-      par: 36,
-      rating: 35.0,
-      slope: 120,
-      holes: [4, 3, 4, 5, 4, 3, 4, 5, 4].map((par, i) => ({
-        number: i + 1,
-        par,
-        strokeIndex: [3, 7, 5, 1, 9, 8, 4, 2, 6][i],
-      })),
-      notes: PLACEHOLDER_NOTE,
-    },
-    {
-      id: 'sand-hollow-champ',
-      name: 'Sand Hollow Resort — Championship',
-      location: 'Hurricane, UT',
-      tee: 'TBD',
-      par: 72,
-      rating: 71.5,
-      slope: 132,
-      holes: holes18(GENERIC_PARS, GENERIC_SI),
-      notes: PLACEHOLDER_NOTE,
-    },
-  ];
+  return courses2026();
 }
 
 export function seedRounds(): Round[] {
