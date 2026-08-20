@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Course, Match, Pairing, RyderTeam, Trip } from '../api/types';
+import { withZone, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
 
 type Tab = 'players' | 'pairings' | 'teams' | 'matches' | 'courses';
@@ -120,6 +121,7 @@ function PlayersTab({ trip, onSaved, notify }: TabProps) {
 
 function PairingsTab({ trip, onSaved, notify }: TabProps) {
   const round = trip.rounds.find((r) => r.format === 'bestball-qualifier');
+  const zone = zoneFor(trip.courses.find((c) => c.id === round?.courseId));
   const [pairings, setPairings] = useState<Pairing[]>([]);
 
   useEffect(() => {
@@ -182,7 +184,7 @@ function PairingsTab({ trip, onSaved, notify }: TabProps) {
             <option value="">tee time…</option>
             {round.teeTimes.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {withZone(t, zone)}
               </option>
             ))}
           </select>
@@ -286,6 +288,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
   const [matches, setMatches] = useState<Match[]>([]);
 
   const round = matchRounds.find((r) => r.id === roundId);
+  const zone = zoneFor(trip.courses.find((c) => c.id === round?.courseId));
   const teamA = trip.ryderTeams.find((t) => t.id === 'A');
   const teamB = trip.ryderTeams.find((t) => t.id === 'B');
   const perSide = round?.format === 'singles' ? 1 : 2;
@@ -407,7 +410,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
               <option value="">tee…</option>
               {round.teeTimes.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {withZone(t, zone)}
                 </option>
               ))}
             </select>

@@ -1,13 +1,14 @@
 import { Link, useParams } from 'react-router-dom';
 import { ComputedMatch } from '../api/types';
 import { useRoundLeaderboard, useTrip } from '../hooks';
+import { TeeZone, withZone, zoneFor } from '../teeTimes';
 
 function fmtToPar(toPar: number): string {
   if (toPar === 0) return 'E';
   return toPar > 0 ? `+${toPar}` : `${toPar}`;
 }
 
-export function MatchCard({ match }: { match: ComputedMatch }) {
+export function MatchCard({ match, zone }: { match: ComputedMatch; zone?: TeeZone | null }) {
   return (
     <div className={`card match-card ${match.final ? 'match-final' : ''}`}>
       <div className="match-sides">
@@ -43,7 +44,7 @@ export function MatchCard({ match }: { match: ComputedMatch }) {
             · {match.detail.totalA}–{match.detail.totalB} {match.detail.unit}
           </span>
         )}
-        {match.teeTime && <span className="muted"> · {match.teeTime}</span>}
+        {match.teeTime && <span className="muted"> · {withZone(match.teeTime, zone ?? null)}</span>}
       </div>
     </div>
   );
@@ -54,6 +55,8 @@ export function MatchesPage() {
   const trip = useTrip();
   const activeRoundId = roundId ?? trip.data?.rounds[0]?.id;
   const board = useRoundLeaderboard(activeRoundId);
+  const activeRound = trip.data?.rounds.find((r) => r.id === activeRoundId);
+  const qualifierZone = zoneFor(trip.data?.courses.find((c) => c.id === activeRound?.courseId));
 
   if (trip.isLoading) return <p className="muted">Loading…</p>;
 
@@ -100,7 +103,7 @@ export function MatchesPage() {
                       {row.name}
                       <div className="muted small">
                         {row.players.map((p) => `${p.name} (${p.playingHandicap})`).join(' · ')}
-                        {row.teeTime ? ` · ${row.teeTime}` : ''}
+                        {row.teeTime ? ` · ${withZone(row.teeTime, qualifierZone)}` : ''}
                       </div>
                     </td>
                     <td>{row.thru || '—'}</td>
@@ -124,7 +127,7 @@ export function MatchesPage() {
             <p className="muted">Matches not set yet — captains submit lineups to the admins.</p>
           )}
           {board.data.matches.map((m) => (
-            <MatchCard key={m.id} match={m} />
+            <MatchCard key={m.id} match={m} zone={qualifierZone} />
           ))}
         </>
       )}

@@ -413,6 +413,15 @@ button.ghost {
 .totals-row td {
   border-top: 2px solid var(--border);
 }
+/* Timezone warning on rounds played outside Mountain time. */
+.tz-note {
+  margin: 0.35rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--green);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.85rem;
+}
 .course-head {
   margin: 0.75rem 0 0.25rem;
 }

@@ -2,11 +2,11 @@
 
 Trip app for the annual 12-man Ryder Cup–style golf trip. 2026 edition: **St. George, Utah, Oct 10–12**.
 
-- **Sat 10/10 — Conestoga** (1:20/1:30/1:40): random-draw two-man best ball, net stroke play at 85% handicap. Winning team become the captains; live draft after the round.
-- **Sun 10/11 AM — Coral Canyon** (7:50/8:00/8:10): four-ball match play, 3 matches.
-- **Sun 10/11 PM — The Ledges** (2:00/2:10/2:20): two-man aggregate Stableford, 3 matches.
-- **Mon 10/12 AM — Sand Hollow Links, 9 holes** (9:00/9:10/9:20): two-man scramble, 3 matches.
-- **Mon 10/12 PM — Sand Hollow Championship** (12:46/12:56/1:06): singles, 6 matches.
+- **Sat 10/10 — Conestoga** (1:20/1:30/1:40 PM **Pacific** — 2:20/2:30/2:40 PM in St. George): random-draw two-man best ball, net stroke play at 85% handicap. Winning team become the captains; live draft after the round.
+- **Sun 10/11 AM — Coral Canyon** (7:50/8:00/8:10 AM Mountain): four-ball match play, 3 matches.
+- **Sun 10/11 PM — The Ledges** (2:00/2:10/2:20 PM Mountain): two-man aggregate Stableford, 3 matches.
+- **Mon 10/12 AM — Sand Hollow Links, 9 holes** (9:00/9:10/9:20 AM Mountain): two-man scramble, 3 matches.
+- **Mon 10/12 PM — Sand Hollow Championship** (12:46/12:56/1:06 PM Mountain): singles, 6 matches.
 
 15 points total, first to **8** wins the Cup.
 

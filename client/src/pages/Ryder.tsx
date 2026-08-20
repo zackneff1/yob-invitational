@@ -1,5 +1,6 @@
 import { useRyderBoard, useTrip } from '../hooks';
 import { MatchCard } from './Matches';
+import { zoneFor } from '../teeTimes';
 
 export function RyderPage() {
   const board = useRyderBoard();
@@ -52,15 +53,19 @@ export function RyderPage() {
         final; projected includes matches still on the course.
       </p>
 
-      {rounds.map((round) => (
-        <section key={round.roundId}>
-          <h2>{round.roundName}</h2>
-          {round.matches.length === 0 && <p className="muted">Matches not set.</p>}
-          {round.matches.map((m) => (
-            <MatchCard key={m.id} match={m} />
-          ))}
-        </section>
-      ))}
+      {rounds.map((round) => {
+        const tripRound = trip.data?.rounds.find((r) => r.id === round.roundId);
+        const zone = zoneFor(trip.data?.courses.find((c) => c.id === tripRound?.courseId));
+        return (
+          <section key={round.roundId}>
+            <h2>{round.roundName}</h2>
+            {round.matches.length === 0 && <p className="muted">Matches not set.</p>}
+            {round.matches.map((m) => (
+              <MatchCard key={m.id} match={m} zone={zone} />
+            ))}
+          </section>
+        );
+      })}
     </div>
   );
 }

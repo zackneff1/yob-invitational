@@ -4,6 +4,7 @@ import { enqueueScores, flushQueue, pendingScores } from '../api/queue';
 import { Trip } from '../api/types';
 import { useAuth } from '../auth';
 import { useScores, useTrip } from '../hooks';
+import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
 
 interface Column {
   entityType: 'player' | 'side';
@@ -69,9 +70,10 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
       const key = p.teeTime ?? 'Unassigned';
       byTime.set(key, [...(byTime.get(key) ?? []), p]);
     }
+    const zone = zoneFor(trip.courses.find((c) => c.id === round.courseId));
     return [...byTime.entries()].map(([teeTime, group]) => ({
       id: `tee-${teeTime}`,
-      label: `${teeTime} — ${group.map((g) => g.name).join(' & ')}`,
+      label: `${withZone(teeTime, zone)} — ${group.map((g) => g.name).join(' & ')}`,
       columns: group.flatMap((g) => {
         const eff = effectiveOf(g.playerIds);
         return g.playerIds.map((pid) => ({
@@ -257,6 +259,10 @@ export function ScoreEntryPage() {
               .join(' · ')}
           </p>
         </div>
+      )}
+
+      {round && course && mountainEquivalentNote(round.teeTimes, zoneFor(course)) && (
+        <p className="tz-note">⏰ {mountainEquivalentNote(round.teeTimes, zoneFor(course))}</p>
       )}
 
       {groups.length === 0 && (

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
 
 export function OverviewPage() {
@@ -62,8 +63,14 @@ export function OverviewPage() {
               </p>
               <p className="muted">{round.description}</p>
               <p>
-                <strong>Tee times:</strong> {round.teeTimes.join(' · ')}
+                <strong>Tee times:</strong>{' '}
+                {withZone(round.teeTimes.join(' · '), zoneFor(course))}
               </p>
+              {mountainEquivalentNote(round.teeTimes, zoneFor(course)) && (
+                <p className="tz-note">
+                  ⏰ {mountainEquivalentNote(round.teeTimes, zoneFor(course))}
+                </p>
+              )}
               <p className="muted">
                 {course?.tee !== 'TBD' ? `${course?.tee} tees · ` : ''}
                 Par {course?.par} · Rating {course?.rating} · Slope {course?.slope}
