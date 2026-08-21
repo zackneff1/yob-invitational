@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { requireAdmin } from '../middleware/auth';
 import { asyncHandler, HttpError } from '../middleware/error';
 import { prisma } from '../store/prisma';
+import { resetAndReseed } from '../store/seed';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
@@ -270,6 +271,33 @@ adminRouter.put(
       return tx.match.findMany({ where: { roundId: body.roundId } });
     });
     res.json({ ok: true, matches: created });
+  }),
+);
+
+// ── Danger zone ────────────────────────────────────────────────────────────
+
+export const RESET_PHRASE = 'RESET AND RESEED';
+
+const ResetSchema = z.object({
+  confirm: z.string(),
+  preserveLogins: z.boolean().optional().default(true),
+});
+
+/**
+ * Wipe the whole database and reload the seed data (players, courses,
+ * rounds, empty teams). Nuclear by design — requires typing the exact
+ * confirmation phrase. preserveLogins (default) carries every claimed
+ * email + password across so nobody has to re-register.
+ */
+adminRouter.post(
+  '/reset-database',
+  asyncHandler(async (req, res) => {
+    const body = ResetSchema.parse(req.body ?? {});
+    if (body.confirm !== RESET_PHRASE) {
+      throw new HttpError(400, `Confirmation phrase must be exactly "${RESET_PHRASE}"`);
+    }
+    const { restoredLogins } = await resetAndReseed(body.preserveLogins);
+    res.json({ ok: true, restoredLogins });
   }),
 );
 
