@@ -113,25 +113,66 @@ export function seedPlayers(): Player[] {
   ];
 }
 
+async function insertSeedData(tx: Prisma.TransactionClient): Promise<void> {
+  await tx.player.createMany({ data: seedPlayers() });
+  await tx.course.createMany({
+    data: seedCourses().map((c) => ({
+      ...c,
+      holes: c.holes as unknown as Prisma.InputJsonValue,
+    })),
+  });
+  await tx.round.createMany({ data: seedRounds() });
+  await tx.ryderTeam.createMany({
+    data: [
+      { id: 'A', name: 'Team A', color: '#1d4ed8', captainId: null, playerIds: [] },
+      { id: 'B', name: 'Team B', color: '#b91c1c', captainId: null, playerIds: [] },
+    ],
+  });
+}
+
 /** One-time bootstrap: populate an empty database with the 2026 trip. */
 export async function ensureSeeded(): Promise<void> {
   const playerCount = await prisma.player.count();
   if (playerCount > 0) return;
-  await prisma.$transaction([
-    prisma.player.createMany({ data: seedPlayers() }),
-    prisma.course.createMany({
-      data: seedCourses().map((c) => ({
-        ...c,
-        holes: c.holes as unknown as Prisma.InputJsonValue,
-      })),
-    }),
-    prisma.round.createMany({ data: seedRounds() }),
-    prisma.ryderTeam.createMany({
-      data: [
-        { id: 'A', name: 'Team A', color: '#1d4ed8', captainId: null, playerIds: [] },
-        { id: 'B', name: 'Team B', color: '#b91c1c', captainId: null, playerIds: [] },
-      ],
-    }),
-  ]);
+  await prisma.$transaction((tx) => insertSeedData(tx));
   logger.info('seeded database with the 2026 trip');
+}
+
+/**
+ * Wipe everything and reload the seed data — the "mass change admin info"
+ * escape hatch behind POST /api/admin/reset-database. With preserveLogins
+ * (the default) each player's claimed email + password is carried across,
+ * matched by player id, so nobody has to re-register after a reset.
+ */
+export async function resetAndReseed(
+  preserveLogins: boolean,
+): Promise<{ restoredLogins: string[] }> {
+  return prisma.$transaction(async (tx) => {
+    const logins = preserveLogins
+      ? await tx.player.findMany({
+          where: { passwordHash: { not: null } },
+          select: { id: true, email: true, passwordHash: true },
+        })
+      : [];
+    // Delete in dependency order — scores reference rounds and players,
+    // pairings/matches/rounds reference rounds and courses.
+    await tx.score.deleteMany();
+    await tx.match.deleteMany();
+    await tx.pairing.deleteMany();
+    await tx.round.deleteMany();
+    await tx.course.deleteMany();
+    await tx.ryderTeam.deleteMany();
+    await tx.player.deleteMany();
+    await insertSeedData(tx);
+    const restoredLogins: string[] = [];
+    for (const login of logins) {
+      const updated = await tx.player.updateMany({
+        where: { id: login.id },
+        data: { email: login.email, passwordHash: login.passwordHash },
+      });
+      if (updated.count > 0) restoredLogins.push(login.id);
+    }
+    logger.warn({ preserveLogins, restoredLogins }, 'database wiped and re-seeded');
+    return { restoredLogins };
+  });
 }

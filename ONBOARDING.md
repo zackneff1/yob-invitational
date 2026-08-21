@@ -25,6 +25,8 @@ Code changes are for things like: wording/text, colors and styling, layout tweak
 
 If Aaron asks for something that's really a data change, point him to the right Admin tab instead of editing code.
 
+**The exception — mass resets:** if the *seeded* trip data itself changes (new scorecards in `server/src/store/courses2026.ts`, changed rounds or players in `seed.ts`) and Aaron wants the live site to match it wholesale, use **Admin → reset**: it wipes everything (including all scores and teams) and reloads the seed data, keeping everyone's logins by default. It's behind a typed confirmation phrase because it is destructive — make sure Aaron understands scores and teams are erased before he uses it.
+
 ## How the code is organized
 
 - **Monorepo**: `/client` (the web app people see) and `/server` (the API + database).

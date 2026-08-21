@@ -5,7 +5,7 @@ import { Course, Match, Pairing, RyderTeam, Trip } from '../api/types';
 import { withZone, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
 
-type Tab = 'players' | 'pairings' | 'teams' | 'matches' | 'courses';
+type Tab = 'players' | 'pairings' | 'teams' | 'matches' | 'courses' | 'reset';
 
 export function AdminPage() {
   const trip = useTrip();
@@ -30,7 +30,7 @@ export function AdminPage() {
     <div className="page">
       <h1>Admin</h1>
       <div className="chip-row">
-        {(['players', 'pairings', 'teams', 'matches', 'courses'] as Tab[]).map((t) => (
+        {(['players', 'pairings', 'teams', 'matches', 'courses', 'reset'] as Tab[]).map((t) => (
           <button key={t} className={`chip ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
             {t === 'pairings' ? 'R1 draw' : t}
           </button>
@@ -42,6 +42,7 @@ export function AdminPage() {
       {tab === 'teams' && <TeamsTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'matches' && <MatchesTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'courses' && <CoursesTab trip={trip.data} onSaved={refresh} notify={notify} />}
+      {tab === 'reset' && <ResetTab trip={trip.data} onSaved={refresh} notify={notify} />}
     </div>
   );
 }
@@ -437,6 +438,77 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
         </div>
       ))}
       <button onClick={() => void save()}>Save lineups</button>
+    </section>
+  );
+}
+
+const RESET_PHRASE = 'RESET AND RESEED';
+
+function ResetTab({ onSaved, notify }: TabProps) {
+  const [phrase, setPhrase] = useState('');
+  const [keepLogins, setKeepLogins] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = async () => {
+    if (
+      !window.confirm(
+        'Wipe EVERYTHING — scores, pairings, teams, matches — and reload the app with the ' +
+          'seeded trip data (players, courses, rounds). This cannot be undone. Continue?',
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api('/api/admin/reset-database', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: phrase, preserveLogins: keepLogins }),
+      });
+      setPhrase('');
+      notify('Database wiped and re-seeded ✓');
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Reset failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card" style={{ borderColor: '#b91c1c' }}>
+      <h2>⚠️ Wipe &amp; re-seed the database</h2>
+      <p className="muted small">
+        Deletes everything — all scores, the Round 1 draw, drafted teams, and match lineups —
+        then reloads the app with the built-in trip data: the 12 players, the five courses with
+        their current seeded scorecards, and the five rounds. Use it to start completely fresh
+        (for example after the seeded course info changes). It cannot be undone.
+      </p>
+      <label style={{ display: 'block', margin: '0.75rem 0' }}>
+        <input
+          type="checkbox"
+          checked={keepLogins}
+          onChange={(e) => setKeepLogins(e.target.checked)}
+        />{' '}
+        Keep everyone&apos;s logins (recommended — nobody has to re-register)
+      </label>
+      <label className="muted small" style={{ display: 'block' }}>
+        Type <strong>{RESET_PHRASE}</strong> to confirm:
+        <input
+          value={phrase}
+          onChange={(e) => setPhrase(e.target.value)}
+          placeholder={RESET_PHRASE}
+          style={{ display: 'block', marginTop: '0.25rem' }}
+        />
+      </label>
+      {error && <p className="form-error">{error}</p>}
+      <button
+        disabled={phrase !== RESET_PHRASE || busy}
+        onClick={() => void reset()}
+        style={{ background: '#b91c1c', marginTop: '0.75rem' }}
+      >
+        {busy ? 'Wiping…' : 'Wipe and re-seed'}
+      </button>
     </section>
   );
 }

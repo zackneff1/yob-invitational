@@ -82,4 +82,5 @@ POST /api/scores/batch                idempotent upsert (offline queue replays t
 GET  /api/leaderboard/round/:id       qualifier board or computed matches
 GET  /api/leaderboard/ryder           Cup totals + all matches
 PUT  /api/admin/…                     players, courses, rounds, pairings (+ randomize), teams, matches, results
+POST /api/admin/reset-database        wipe everything and reload seed data (typed confirmation; keeps logins by default)
 ```
