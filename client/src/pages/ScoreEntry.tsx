@@ -290,6 +290,7 @@ export function ScoreEntryPage() {
                 <th>Hole</th>
                 <th>Par</th>
                 <th>Yds</th>
+                <th>Index</th>
                 {group.columns.map((c) => (
                   <th key={c.entityId}>{c.label}</th>
                 ))}
@@ -300,10 +301,10 @@ export function ScoreEntryPage() {
                 <tr key={hole.number}>
                   <td>
                     <strong>{hole.number}</strong>
-                    <span className="muted small"> si{hole.strokeIndex}</span>
                   </td>
                   <td>{hole.par}</td>
                   <td className="muted small">{hole.yards ?? '—'}</td>
+                  <td className="muted small">{hole.strokeIndex}</td>
                   {group.columns.map((c) => {
                     const strokes = strokesOnHole(
                       c.effectiveHandicap,
@@ -344,6 +345,7 @@ export function ScoreEntryPage() {
                 <td className="muted small">
                   <strong>{totalYards ? totalYards.toLocaleString() : '—'}</strong>
                 </td>
+                <td />
                 {group.columns.map((c) => {
                   const total = course.holes.reduce((sum, h) => {
                     const v = valueFor(c, h.number);
