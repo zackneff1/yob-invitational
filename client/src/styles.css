@@ -15,6 +15,11 @@
   box-sizing: border-box;
 }
 
+html {
+  /* Don't let iOS reflow text when the phone is turned sideways. */
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   font-family:
@@ -22,10 +27,27 @@ body {
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  /* No rubber-band bounce past the app shell when installed to the home screen. */
+  overscroll-behavior-y: contain;
 }
 
 #root {
   min-height: 100dvh;
+}
+
+/* Touch behaviour: kill the tap flash and the 300ms double-tap-zoom delay, and
+   give every control a bit of press feedback so taps feel acknowledged. */
+a,
+button,
+.chip,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+button:active,
+.chip:active {
+  transform: scale(0.97);
 }
 
 h1 {
@@ -61,7 +83,8 @@ p {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.6rem 1rem;
+  /* Installed on iOS the page runs under the status bar, so pad for it. */
+  padding: calc(0.55rem + env(safe-area-inset-top)) 1rem 0.55rem;
   background: var(--green-dark);
   position: sticky;
   top: 0;
@@ -90,6 +113,9 @@ p {
   font-size: 0.75rem;
   color: var(--text);
   background: var(--surface-2);
+  /* Opt out of the roomy default button height — these are pills. */
+  min-height: 0;
+  margin: 0;
 }
 .badge-offline {
   background: var(--red);
@@ -105,47 +131,64 @@ p {
 
 .content {
   flex: 1;
-  padding: 0.75rem 1rem 5.5rem;
+  padding: 0.75rem 1rem calc(5rem + env(safe-area-inset-bottom));
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
 }
 
+/* Bottom tab bar — the app's primary navigation on a phone. Frosted so
+   content scrolling underneath reads as depth rather than clutter. */
 .tabbar {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   display: flex;
-  background: var(--surface);
+  background: rgba(30, 41, 59, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
-  z-index: 10;
+  z-index: 20;
 }
 .tabbar a {
+  position: relative;
   flex: 1;
-  text-align: center;
-  padding: 0.8rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  /* 44px+ tall including the label — comfortable thumb target. */
+  padding: 0.45rem 0 0.4rem;
+  min-height: 3.3rem;
   color: var(--muted);
   text-decoration: none;
-  font-size: 0.85rem;
-  text-transform: capitalize;
+  font-size: 0.67rem;
+  font-weight: 500;
+  transition: color 0.15s ease;
 }
 .tabbar a.active {
   color: var(--green);
   font-weight: 600;
 }
-
-.statusline {
-  position: fixed;
-  bottom: calc(3rem + env(safe-area-inset-bottom));
-  right: 0.5rem;
-  font-size: 0.65rem;
-  color: var(--muted);
-  background: rgba(15, 23, 42, 0.8);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  pointer-events: none;
+/* Little indicator riding the top edge of the active tab. */
+.tabbar a.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 1.6rem;
+  height: 2px;
+  background: var(--green);
+  border-radius: 0 0 2px 2px;
+}
+.tab-icon {
+  display: block;
+  transition: transform 0.15s ease;
+}
+.tabbar a.active .tab-icon {
+  transform: translateY(-1px);
 }
 
 /* cards & tables */
@@ -160,6 +203,8 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  /* Equal-width digits so scores line up column to column. */
+  font-variant-numeric: tabular-nums;
 }
 th,
 td {
@@ -208,8 +253,9 @@ button {
   color: #052e16;
   font-weight: 600;
   border: none;
-  border-radius: 6px;
-  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  min-height: 2.6rem;
   cursor: pointer;
   margin: 0.25rem 0;
 }
@@ -270,11 +316,15 @@ button.ghost {
   margin: 0.5rem 0;
 }
 .chip {
+  display: inline-flex;
+  align-items: center;
   background: var(--surface);
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.35rem 0.9rem;
+  padding: 0.35rem 0.95rem;
+  min-height: 2.2rem;
+  margin: 0;
   text-decoration: none;
   font-size: 0.85rem;
 }
@@ -391,18 +441,25 @@ button.ghost {
 .group-select {
   margin: 0.5rem 0;
 }
+/* Full-bleed so the card gets the whole screen width on a phone. The gutter
+   lives on the end cells rather than this wrapper, so the frozen hole column
+   below can sit flush to the edge with nothing showing through beside it. */
 .score-grid-wrap {
   overflow-x: auto;
   margin: 0.5rem -1rem;
-  padding: 0 1rem;
+  -webkit-overflow-scrolling: touch;
 }
 .score-grid input {
-  width: 3.2rem;
+  width: 3.1rem;
   text-align: center;
-  padding: 0.45rem 0.2rem;
+  /* Stays at 16px so iOS doesn't zoom the page when the field is focused. */
+  font-size: 1rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.2rem;
 }
 .score-grid.compact input {
   width: 2.6rem;
+  min-height: 2.1rem;
   padding: 0.3rem 0.1rem;
 }
 .score-grid td,
@@ -410,8 +467,141 @@ button.ghost {
   padding: 0.25rem 0.3rem;
   white-space: nowrap;
 }
+.score-grid th:first-child,
+.score-grid td:first-child {
+  padding-left: 1rem;
+}
+.score-grid th:last-child,
+.score-grid td:last-child {
+  padding-right: 1rem;
+}
+/* Freeze the hole column so you can still see which hole you're on while
+   scrolling sideways through a four-ball's worth of players. Not on the
+   admin course editor (.compact), which sits on a lighter card. */
+.score-grid:not(.compact) th:first-child,
+.score-grid:not(.compact) td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg);
+}
 .totals-row td {
   border-top: 2px solid var(--border);
+}
+.totals-row.net-row td {
+  border-top: none;
+  color: var(--green);
+}
+
+/* Per-player column header: name over the strokes they're getting. */
+.col-head {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.col-head .col-strokes {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--green);
+  text-transform: none;
+}
+.col-head .col-strokes.scratch {
+  color: var(--muted);
+}
+
+/* Score box, its stroke markers, and the net result underneath. The marker and
+   net lines keep their size even when empty so columns stay lined up. */
+.score-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+.score-cell-top {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.stroke-marks {
+  display: inline-block;
+  min-width: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--green);
+}
+.net-line {
+  min-height: 0.8rem;
+  font-size: 0.63rem;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.net-line strong {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* Gross/net summary cards above the card — the at-a-glance version. Cards
+   share the width evenly so a four-ball's four players all fit on a phone
+   without a sideways scroll. */
+.score-summary {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0.2rem;
+}
+.summary-card {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+}
+.summary-card .summary-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary-card .summary-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+.summary-card .summary-net {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--green);
+}
+.summary-card .summary-gross {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.summary-card .summary-thru {
+  font-size: 0.62rem;
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+
+/* "Enter gross" callout on the score page. */
+.entry-note {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.6rem 0 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.8rem;
+}
+.entry-note strong {
+  color: var(--green);
 }
 /* Handicap rule for a round — derived from the scoring code, not stored text. */
 .rule-line {
@@ -442,21 +632,6 @@ button.ghost {
 .course-head p {
   margin: 0.15rem 0 0;
 }
-/* Score box plus its stroke markers. The marker span keeps its width even when
-   empty so every column stays lined up down the card. */
-.score-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.15rem;
-}
-.stroke-marks {
-  display: inline-block;
-  min-width: 0.9rem;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--green);
-}
-
 /* admin */
 .pairing-row,
 .match-editor-row {

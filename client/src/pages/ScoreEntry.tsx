@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { enqueueScores, flushQueue, pendingScores } from '../api/queue';
-import { Trip } from '../api/types';
+import { Course, Hole, Round, Trip } from '../api/types';
 import { useAuth } from '../auth';
 import { useScores, useTrip } from '../hooks';
 import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
@@ -34,6 +34,19 @@ function strokesOnHole(ph: number, strokeIndex: number, holeCount: number): numb
   const rem = abs % holeCount;
   const extra = ph > 0 ? strokeIndex <= rem : strokeIndex > holeCount - rem;
   return (base + (extra ? 1 : 0)) * Math.sign(ph);
+}
+
+/** Mirror of `stablefordPoints` on the server: par 2, birdie 3, bogey 1. */
+function stablefordPoints(net: number, par: number): number {
+  return Math.max(0, 2 + par - net);
+}
+
+/** Only meaningful once every hole has a yardage — a partial sum would read
+ *  like a real course length and be wrong. */
+function totalYardsOf(course: Course): number | null {
+  return course.holes.every((h) => typeof h.yards === 'number')
+    ? course.holes.reduce((sum, h) => sum + (h.yards ?? 0), 0)
+    : null;
 }
 
 /** Build the score-entry groups for a round: tee-time groups for the
@@ -133,6 +146,197 @@ function buildGroups(trip: Trip, roundId: string): Group[] {
   });
 }
 
+interface ColumnStats {
+  thru: number;
+  gross: number;
+  net: number;
+  points: number;
+}
+
+/**
+ * The scorecard itself. Entry is always gross strokes; net is derived here for
+ * display only, the same way the server derives it for the leaderboard
+ * (gross minus the strokes the player gets on that hole).
+ */
+function ScoreCard({
+  course,
+  group,
+  round,
+  valueFor,
+  setScore,
+}: {
+  course: Course;
+  group: Group;
+  round: Round;
+  valueFor: (col: Column, hole: number) => number | '';
+  setScore: (col: Column, hole: number, raw: string) => void;
+}) {
+  const holeCount = course.holes.length;
+  const totalYards = totalYardsOf(course);
+  const isStableford = round.format === 'stableford';
+
+  const strokesFor = (col: Column, hole: Hole) =>
+    strokesOnHole(col.effectiveHandicap, hole.strokeIndex, holeCount);
+
+  const statsFor = (col: Column): ColumnStats => {
+    const stats: ColumnStats = { thru: 0, gross: 0, net: 0, points: 0 };
+    for (const hole of course.holes) {
+      const gross = valueFor(col, hole.number);
+      if (typeof gross !== 'number') continue;
+      const net = gross - strokesFor(col, hole);
+      stats.thru += 1;
+      stats.gross += gross;
+      stats.net += net;
+      stats.points += stablefordPoints(net, hole.par);
+    }
+    return stats;
+  };
+
+  const allStats = group.columns.map((col) => ({ col, stats: statsFor(col) }));
+  const anyScores = allStats.some(({ stats }) => stats.thru > 0);
+
+  return (
+    <>
+      {anyScores && (
+        <div className="score-summary">
+          {allStats.map(({ col, stats }) => (
+            <div className="summary-card" key={col.entityId}>
+              <div className="summary-name">{col.label}</div>
+              {stats.thru > 0 ? (
+                <>
+                  <div className="summary-figures">
+                    <span className="summary-net">{stats.net}</span>
+                    <span className="summary-gross">net</span>
+                  </div>
+                  <div className="summary-thru">
+                    {stats.gross} gross · thru {stats.thru}
+                    {isStableford ? ` · ${stats.points} pt${stats.points === 1 ? '' : 's'}` : ''}
+                  </div>
+                </>
+              ) : (
+                <div className="summary-thru">no scores yet</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="score-grid-wrap">
+        <table className="score-grid">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>Par</th>
+              <th>Yds</th>
+              {group.columns.map((c) => (
+                <th key={c.entityId}>
+                  <span className="col-head">
+                    <span>{c.label}</span>
+                    <span className={`col-strokes ${c.effectiveHandicap > 0 ? '' : 'scratch'}`}>
+                      {c.effectiveHandicap > 0
+                        ? `+${c.effectiveHandicap} stroke${c.effectiveHandicap > 1 ? 's' : ''}`
+                        : 'no strokes'}
+                    </span>
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {course.holes.map((hole) => (
+              <tr key={hole.number}>
+                <td>
+                  <strong>{hole.number}</strong>
+                  <span className="muted small"> si{hole.strokeIndex}</span>
+                </td>
+                <td>{hole.par}</td>
+                <td className="muted small">{hole.yards ?? '—'}</td>
+                {group.columns.map((c) => {
+                  const strokes = strokesFor(c, hole);
+                  const gross = valueFor(c, hole.number);
+                  const net = typeof gross === 'number' ? gross - strokes : null;
+                  return (
+                    <td key={c.entityId}>
+                      <div className="score-cell">
+                        <div className="score-cell-top">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={20}
+                            aria-label={`${c.label} gross strokes, hole ${hole.number}`}
+                            value={gross}
+                            onChange={(e) => setScore(c, hole.number, e.target.value)}
+                          />
+                          <span
+                            className="stroke-marks"
+                            title={
+                              strokes > 0
+                                ? `${c.label} gets ${strokes} stroke${strokes > 1 ? 's' : ''} here`
+                                : undefined
+                            }
+                          >
+                            {strokes > 0 ? '*'.repeat(strokes) : ''}
+                          </span>
+                        </div>
+                        {/* Net only says something when a stroke was applied. */}
+                        <span className="net-line">
+                          {net != null && strokes > 0 ? (
+                            <>
+                              net <strong>{net}</strong>
+                            </>
+                          ) : (
+                            ' '
+                          )}
+                        </span>
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr className="totals-row">
+              <td colSpan={2}>
+                <strong>Gross</strong>
+              </td>
+              <td className="muted small">
+                <strong>{totalYards ? totalYards.toLocaleString() : '—'}</strong>
+              </td>
+              {allStats.map(({ col, stats }) => (
+                <td key={col.entityId}>
+                  <strong>{stats.thru ? stats.gross : '—'}</strong>
+                </td>
+              ))}
+            </tr>
+            <tr className="totals-row net-row">
+              <td colSpan={3}>
+                <strong>Net</strong>
+              </td>
+              {allStats.map(({ col, stats }) => (
+                <td key={col.entityId}>
+                  <strong>{stats.thru ? stats.net : '—'}</strong>
+                </td>
+              ))}
+            </tr>
+            {isStableford && (
+              <tr className="totals-row net-row">
+                <td colSpan={3}>
+                  <strong>Points</strong>
+                </td>
+                {allStats.map(({ col, stats }) => (
+                  <td key={col.entityId}>
+                    <strong>{stats.thru ? stats.points : '—'}</strong>
+                  </td>
+                ))}
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 export function ScoreEntryPage() {
   const { auth } = useAuth();
   const trip = useTrip();
@@ -169,13 +373,7 @@ export function ScoreEntryPage() {
   }, [groups, groupId, auth?.player.id]);
 
   const group = groups.find((g) => g.id === groupId);
-
-  // Only show a total distance once every hole has a yardage — a partial sum
-  // would read like a real course length and be wrong.
-  const totalYards =
-    course && course.holes.every((h) => typeof h.yards === 'number')
-      ? course.holes.reduce((sum, h) => sum + (h.yards ?? 0), 0)
-      : null;
+  const totalYards = course ? totalYardsOf(course) : null;
 
   const valueFor = (col: Column, hole: number): number | '' => {
     const key = `${col.entityType}|${col.entityId}|${hole}`;
@@ -245,6 +443,15 @@ export function ScoreEntryPage() {
         {round?.name} · {round?.formatLabel}
       </p>
 
+      <p className="entry-note">
+        <span>⛳</span>
+        <span>
+          Enter your <strong>gross</strong> score — the actual number of shots you took. The app
+          takes your strokes off and shows the <strong>net</strong> underneath. Never enter a net
+          score yourself.
+        </span>
+      </p>
+
       {course && (
         <div className="course-head">
           <h2>{course.name}</h2>
@@ -282,84 +489,16 @@ export function ScoreEntryPage() {
         </select>
       )}
 
-      {group && course && (
-        <div className="score-grid-wrap">
-          <table className="score-grid">
-            <thead>
-              <tr>
-                <th>Hole</th>
-                <th>Par</th>
-                <th>Yds</th>
-                {group.columns.map((c) => (
-                  <th key={c.entityId}>{c.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {course.holes.map((hole) => (
-                <tr key={hole.number}>
-                  <td>
-                    <strong>{hole.number}</strong>
-                    <span className="muted small"> si{hole.strokeIndex}</span>
-                  </td>
-                  <td>{hole.par}</td>
-                  <td className="muted small">{hole.yards ?? '—'}</td>
-                  {group.columns.map((c) => {
-                    const strokes = strokesOnHole(
-                      c.effectiveHandicap,
-                      hole.strokeIndex,
-                      course.holes.length,
-                    );
-                    return (
-                      <td key={c.entityId}>
-                        <div className="score-cell">
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={1}
-                            max={20}
-                            value={valueFor(c, hole.number)}
-                            onChange={(e) => setScore(c, hole.number, e.target.value)}
-                          />
-                          <span
-                            className="stroke-marks"
-                            title={
-                              strokes > 0
-                                ? `${c.label} gets ${strokes} stroke${strokes > 1 ? 's' : ''} here`
-                                : undefined
-                            }
-                          >
-                            {strokes > 0 ? '*'.repeat(strokes) : ''}
-                          </span>
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              <tr className="totals-row">
-                <td colSpan={2}>
-                  <strong>Total</strong>
-                </td>
-                <td className="muted small">
-                  <strong>{totalYards ? totalYards.toLocaleString() : '—'}</strong>
-                </td>
-                {group.columns.map((c) => {
-                  const total = course.holes.reduce((sum, h) => {
-                    const v = valueFor(c, h.number);
-                    return sum + (typeof v === 'number' ? v : 0);
-                  }, 0);
-                  return (
-                    <td key={c.entityId}>
-                      <strong>{total || '—'}</strong>
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      {group && course && round && (
+        <ScoreCard
+          course={course}
+          group={group}
+          round={round}
+          valueFor={valueFor}
+          setScore={setScore}
+        />
       )}
+
       {group && (
         <p className="muted small">
           <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.
@@ -370,7 +509,7 @@ export function ScoreEntryPage() {
       )}
       <p className="muted small">
         Scores save on your phone instantly and sync when there’s signal — the “unsynced” badge up
-        top shows anything still waiting. Enter gross strokes; handicaps are applied automatically.
+        top shows anything still waiting.
       </p>
     </div>
   );
