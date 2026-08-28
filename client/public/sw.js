@@ -2,7 +2,11 @@
 // network-first with cache fallback so the app still opens with zero signal.
 // API calls pass through untouched — offline data handling lives in the app
 // (persisted query cache + score queue in localStorage).
-const CACHE = 'yob-shell-v1';
+//
+// Bump CACHE whenever the caching rules change: `activate` deletes every other
+// cache, which is also how a bad entry gets cleared from phones in the field.
+// v2 fixes a cache-poisoning bug — see isUsableAsset below.
+const CACHE = 'yob-shell-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {
@@ -14,6 +18,21 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/**
+ * Is this response really the asset it claims to be?
+ *
+ * A request for a hashed asset that no longer exists on the server used to come
+ * back as the SPA fallback: index.html, with a 200. Caching that under a .css
+ * or .js URL poisons it permanently (assets are served cache-first and never
+ * revalidated), and the app loads with no styles. The server now 404s those,
+ * but the cache outlives any one deploy, so refuse HTML here too.
+ */
+function isUsableAsset(res) {
+  if (!res || !res.ok || res.type === 'opaqueredirect') return false;
+  const type = res.headers.get('content-type') || '';
+  return !type.includes('text/html');
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
@@ -24,9 +43,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(CACHE).then(async (cache) => {
         const hit = await cache.match(event.request);
-        if (hit) return hit;
+        if (isUsableAsset(hit)) return hit;
+        // Drop anything unusable that a previous version stored here.
+        if (hit) await cache.delete(event.request);
         const res = await fetch(event.request);
-        if (res.ok) cache.put(event.request, res.clone());
+        if (isUsableAsset(res)) cache.put(event.request, res.clone());
         return res;
       }),
     );

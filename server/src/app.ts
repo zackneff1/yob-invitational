@@ -50,7 +50,18 @@ export function createApp(): express.Express {
         },
       }),
     );
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      // A request for something with a file extension that express.static
+      // didn't find is genuinely missing — usually a stale build's hashed
+      // asset. It must 404. Answering with index.html gives a 200 of
+      // text/html, which the browser then refuses to use as a stylesheet or
+      // script (silently, so the page just renders unstyled) and which a
+      // service worker will happily cache under that URL forever.
+      if (path.extname(req.path)) {
+        res.status(404).type('text/plain').send('Not found');
+        return;
+      }
+      // Real SPA route — hand over the app shell.
       res.sendFile(path.join(clientDist, 'index.html'));
     });
   } else {
