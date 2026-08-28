@@ -228,6 +228,7 @@ function ScoreCard({
               <th>Hole</th>
               <th>Par</th>
               <th>Yds</th>
+              <th>Index</th>
               {group.columns.map((c) => (
                 <th key={c.entityId}>
                   <span className="col-head">
@@ -247,10 +248,10 @@ function ScoreCard({
               <tr key={hole.number}>
                 <td>
                   <strong>{hole.number}</strong>
-                  <span className="muted small"> si{hole.strokeIndex}</span>
                 </td>
                 <td>{hole.par}</td>
                 <td className="muted small">{hole.yards ?? '—'}</td>
+                <td className="muted small">{hole.strokeIndex}</td>
                 {group.columns.map((c) => {
                   const strokes = strokesFor(c, hole);
                   const gross = valueFor(c, hole.number);
@@ -302,6 +303,7 @@ function ScoreCard({
               <td className="muted small">
                 <strong>{totalYards ? totalYards.toLocaleString() : '—'}</strong>
               </td>
+              <td />
               {allStats.map(({ col, stats }) => (
                 <td key={col.entityId}>
                   <strong>{stats.thru ? stats.gross : '—'}</strong>
@@ -309,7 +311,7 @@ function ScoreCard({
               ))}
             </tr>
             <tr className="totals-row net-row">
-              <td colSpan={3}>
+              <td colSpan={4}>
                 <strong>Net</strong>
               </td>
               {allStats.map(({ col, stats }) => (
@@ -320,7 +322,7 @@ function ScoreCard({
             </tr>
             {isStableford && (
               <tr className="totals-row net-row">
-                <td colSpan={3}>
+                <td colSpan={4}>
                   <strong>Points</strong>
                 </td>
                 {allStats.map(({ col, stats }) => (
