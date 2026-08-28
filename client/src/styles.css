@@ -587,6 +587,224 @@ button.ghost {
   margin-top: 0.1rem;
 }
 
+/* ── Hole-by-hole play view ──────────────────────────────────────────────── */
+.view-toggle {
+  margin: 0.7rem 0 0.2rem;
+}
+.view-toggle .chip {
+  flex: 1;
+  justify-content: center;
+}
+
+.hole-head {
+  padding: 0.7rem 0.8rem 0.6rem;
+}
+.hole-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.hole-arrow {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  /* Big enough to hit while walking. */
+  min-width: 3rem;
+  min-height: 2.9rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0 0.6rem;
+  margin: 0;
+}
+.hole-arrow:disabled {
+  opacity: 0.3;
+}
+.hole-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+.hole-number {
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+.hole-of {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.hole-facts {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+.hole-fact {
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.stroking-line {
+  margin: 0.6rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.stroking-line strong {
+  color: var(--green);
+}
+
+/* Jump strip — every hole, with the ones fully scored filled in. */
+.hole-strip {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  margin: 0.5rem -1rem;
+  padding: 0.15rem 1rem 0.4rem;
+  -webkit-overflow-scrolling: touch;
+}
+.hole-pip {
+  flex: 0 0 auto;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 2.1rem;
+  min-height: 2.1rem;
+  padding: 0;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.hole-pip.done {
+  color: var(--text);
+  border-color: var(--green-dark);
+  background: var(--green-dark);
+}
+.hole-pip.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: #052e16;
+}
+
+/* One row per player: who they are, their stroke on this hole, their score.
+   Kept tight so a four-ball's four players fit without much scrolling. */
+.hole-player {
+  padding: 0.5rem 0.7rem 0.55rem;
+  margin: 0.45rem 0;
+}
+.hole-player-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.hole-player-name {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.hole-stroke-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--green);
+  white-space: nowrap;
+}
+.hole-stroke-badge.none {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+.stepper button {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 2.9rem;
+  min-height: 2.9rem;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  margin: 0;
+}
+.stepper button:disabled {
+  opacity: 0.35;
+}
+.stepper input {
+  width: 3.9rem;
+  min-height: 2.9rem;
+  text-align: center;
+  font-size: 1.55rem;
+  font-weight: 800;
+  padding: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+.stepper-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-left: 0.2rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.stepper-net strong {
+  color: var(--green);
+  font-size: 1rem;
+  font-weight: 800;
+}
+.stepper-pts {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+/* Sits at the far right of the stepper row rather than taking its own line,
+   and stays visually quiet so it never reads as a scoring control.
+   Scoped under .stepper to outrank the big .stepper button sizing above. */
+.stepper .clear-score {
+  margin: 0 0 0 auto;
+  min-width: 1.9rem;
+  min-height: 1.9rem;
+  padding: 0;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+/* Mid-round the hole card carries the detail, so the page header shrinks to
+   one line. */
+.play-context {
+  margin: 0.2rem 0 0;
+}
+
+.hole-actions {
+  margin: 0.8rem 0 0.2rem;
+}
+.hole-next {
+  width: 100%;
+  min-height: 3.2rem;
+  font-size: 1.05rem;
+  border-radius: 12px;
+}
+.end-round {
+  width: 100%;
+  margin-top: 0.8rem;
+}
+.start-card h2 {
+  margin-top: 0.1rem;
+}
+
 /* "Enter gross" callout on the score page. */
 .entry-note {
   display: flex;
