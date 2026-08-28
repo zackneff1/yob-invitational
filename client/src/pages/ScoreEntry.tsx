@@ -381,10 +381,11 @@ export function ScoreEntryPage() {
     setScore(col, hole, String(Math.max(1, Math.min(20, next))));
   };
 
-  const endRound = () => {
+  /** Only offered on the last hole — no way to bail out mid-round by accident. */
+  const finishRound = () => {
     if (
       !window.confirm(
-        'End your round? Your scores are saved either way — you can resume or use the full card to edit.',
+        'Finish the round? Your scores are saved either way — you can still fix anything on the full card.',
       )
     )
       return;
@@ -395,31 +396,34 @@ export function ScoreEntryPage() {
 
   return (
     <div className="page">
-      <h1>Scores</h1>
-      <div className="chip-row">
-        {rounds.map((r, i) => (
-          <button
-            key={r.id}
-            className={`chip ${r.id === activeRoundId ? 'active' : ''}`}
-            onClick={() => {
-              setRoundId(r.id);
-              setGroupId('');
-              localRef.current = {};
-              setLocal({});
-            }}
-          >
-            R{i + 1}
-          </button>
-        ))}
-      </div>
-      {/* Mid-round the hole card carries the detail, so collapse the header
-          down to one line and give the screen to the scoring controls. */}
+      {/* Out on the course the screen belongs to the hole in front of you: no
+          round switcher, no group picker, no course blurb. Those all come back
+          on the full card, which is also the way out of play mode. */}
       {inPlay ? (
-        <p className="muted small play-context">
-          {[round?.name, round?.formatLabel.split('—')[0].trim()].filter(Boolean).join(' · ')}
-        </p>
+        <h1 className="play-title">
+          {round?.name}
+          <span className="muted"> · {round?.formatLabel.split('—')[0].trim()}</span>
+        </h1>
       ) : (
         <>
+          <h1>Scores</h1>
+          <div className="chip-row">
+            {rounds.map((r, i) => (
+              <button
+                key={r.id}
+                className={`chip ${r.id === activeRoundId ? 'active' : ''}`}
+                onClick={() => {
+                  setRoundId(r.id);
+                  setGroupId('');
+                  localRef.current = {};
+                  setLocal({});
+                }}
+              >
+                R{i + 1}
+              </button>
+            ))}
+          </div>
+
           <p className="muted">
             {round?.name} · {round?.formatLabel}
           </p>
@@ -444,23 +448,27 @@ export function ScoreEntryPage() {
           {round && course && mountainEquivalentNote(round.teeTimes, zoneFor(course)) && (
             <p className="tz-note">⏰ {mountainEquivalentNote(round.teeTimes, zoneFor(course))}</p>
           )}
+
+          {groups.length === 0 && (
+            <p className="muted">
+              No groups yet for this round — pairings/matches get set up by the admins first.
+            </p>
+          )}
+
+          {groups.length > 1 && (
+            <select
+              className="group-select"
+              value={groupId}
+              onChange={(e) => setGroupId(e.target.value)}
+            >
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
+          )}
         </>
-      )}
-
-      {groups.length === 0 && (
-        <p className="muted">
-          No groups yet for this round — pairings/matches get set up by the admins first.
-        </p>
-      )}
-
-      {groups.length > 1 && (
-        <select className="group-select" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.label}
-            </option>
-          ))}
-        </select>
       )}
 
       {group && course && round && (
@@ -498,7 +506,7 @@ export function ScoreEntryPage() {
               setScore={setScore}
               onAdjust={adjustScore}
               onGoToHole={goToHole}
-              onEnd={endRound}
+              onFinish={finishRound}
             />
           ) : (
             <StartRound
@@ -520,10 +528,12 @@ export function ScoreEntryPage() {
           them in Admin → Courses.
         </p>
       )}
-      <p className="muted small">
-        Scores save on your phone instantly and sync when there’s signal — the “unsynced” badge up
-        top shows anything still waiting.
-      </p>
+      {!inPlay && (
+        <p className="muted small">
+          Scores save on your phone instantly and sync when there’s signal — the “unsynced” badge
+          up top shows anything still waiting.
+        </p>
+      )}
     </div>
   );
 }

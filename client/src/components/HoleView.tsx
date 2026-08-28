@@ -1,13 +1,18 @@
 /**
- * Hole-by-hole play view — what you actually use walking the course: one hole
- * at a time, the hole's details, who's getting a stroke on it, a tap-to-score
- * stepper per player, and a big button to the next hole.
+ * Hole-by-hole play view — what you actually use walking the course: where the
+ * match stands, one hole at a time with its details, who's getting a stroke on
+ * it, and tap-only scoring.
+ *
+ * Scores here are entered with the −/+ buttons rather than a text field on
+ * purpose: tapping a number input on a phone throws up the keyboard over half
+ * the screen. Typing an exact score lives in the full-card view.
  */
 import { Course, Round } from '../api/types';
 import {
   Column,
   Group,
   ValueFor,
+  liveStatus,
   statsFor,
   strokesForHole,
   stablefordPoints,
@@ -24,7 +29,7 @@ interface Props {
   /** Nudge a score by delta, starting from par when nothing is entered yet. */
   onAdjust: (col: Column, hole: number, delta: number, par: number) => void;
   onGoToHole: (hole: number) => void;
-  onEnd: () => void;
+  onFinish: () => void;
 }
 
 export function HoleView({
@@ -36,12 +41,13 @@ export function HoleView({
   setScore,
   onAdjust,
   onGoToHole,
-  onEnd,
+  onFinish,
 }: Props) {
   const holeCount = course.holes.length;
   const current = course.holes.find((h) => h.number === hole) ?? course.holes[0];
   const isLast = current.number === holeCount;
   const isStableford = round.format === 'stableford';
+  const status = liveStatus(course, round, group, valueFor);
 
   const strokesOf = (col: Column) => strokesForHole(course, col, current);
 
@@ -57,6 +63,15 @@ export function HoleView({
 
   return (
     <div className="hole-play">
+      {status && (
+        <div className="match-status-bar">
+          <span className="match-status-label">
+            {round.format === 'bestball-qualifier' ? 'Team' : 'Match'}
+          </span>
+          <span className="match-status-text">{status}</span>
+        </div>
+      )}
+
       <div className="card hole-head">
         <div className="hole-nav">
           <button
@@ -137,23 +152,22 @@ export function HoleView({
               )}
             </div>
             <div className="stepper">
+              {/* Nothing entered yet: only + is live, so it's obvious that's
+                  where you start (it lands on par). */}
               <button
                 aria-label={`Lower ${col.label}'s score`}
                 onClick={() => bump(col, -1)}
-                disabled={gross === 1}
+                disabled={gross === '' || gross === 1}
               >
                 −
               </button>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={20}
-                placeholder="–"
-                aria-label={`${col.label} gross strokes, hole ${current.number}`}
-                value={gross}
-                onChange={(e) => setScore(col, current.number, e.target.value)}
-              />
+              <span
+                className={`stepper-value ${gross === '' ? 'empty' : ''}`}
+                role="status"
+                aria-label={`${col.label} gross score${gross === '' ? ' not entered' : `: ${gross}`}`}
+              >
+                {gross === '' ? '–' : gross}
+              </span>
               <button aria-label={`Raise ${col.label}'s score`} onClick={() => bump(col, 1)}>
                 +
               </button>
@@ -191,7 +205,7 @@ export function HoleView({
 
       <div className="hole-actions">
         {isLast ? (
-          <button className="hole-next" onClick={onEnd}>
+          <button className="hole-next" onClick={onFinish}>
             Finish round ✓
           </button>
         ) : (
@@ -225,10 +239,6 @@ export function HoleView({
           );
         })}
       </div>
-
-      <button className="ghost end-round" onClick={onEnd}>
-        End round
-      </button>
     </div>
   );
 }

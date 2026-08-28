@@ -596,6 +596,39 @@ button.ghost {
   justify-content: center;
 }
 
+/* Where the match stands, pinned above the hole so it's the first thing read. */
+.match-status-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--green-dark);
+  border-radius: 10px;
+}
+.match-status-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #bbf7d0;
+  flex: 0 0 auto;
+}
+.match-status-text {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.play-title {
+  font-size: 1.05rem;
+  margin: 0.35rem 0 0;
+}
+.play-title .muted {
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
 .hole-head {
   padding: 0.7rem 0.8rem 0.6rem;
 }
@@ -741,14 +774,27 @@ button.ghost {
 .stepper button:disabled {
   opacity: 0.35;
 }
-.stepper input {
-  width: 3.9rem;
+/* The score itself is text, not a field: tapping a number input on a phone
+   throws the keyboard over half the screen. Typing lives on the full card. */
+.stepper-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.6rem;
   min-height: 2.9rem;
-  text-align: center;
+  /* Recessed (darker than the raised −/+ buttons) so it reads as a read-out
+     rather than a third button to press. */
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-size: 1.55rem;
   font-weight: 800;
-  padding: 0.2rem;
   font-variant-numeric: tabular-nums;
+}
+.stepper-value.empty {
+  color: #3f4c60;
+  font-size: 1.1rem;
+  font-weight: 500;
 }
 .stepper-result {
   display: flex;
@@ -796,10 +842,6 @@ button.ghost {
   min-height: 3.2rem;
   font-size: 1.05rem;
   border-radius: 12px;
-}
-.end-round {
-  width: 100%;
-  margin-top: 0.8rem;
 }
 .start-card h2 {
   margin-top: 0.1rem;
