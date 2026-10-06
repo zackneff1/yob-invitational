@@ -103,7 +103,7 @@ function readingToShow(s: MatchState): { r: MatchReading; provisional: boolean }
 
 /** How the Ryder Cup writes a match: "2 UP" live, "3&2" / "1 UP" / "HALVED" final, "AS" level. */
 export function describeMatch(s: MatchState, teamNames?: { A: string; B: string }): MatchReadout {
-  const isMatchPlay = s.format === 'fourball' || s.format === 'singles';
+  const isMatchPlay = s.format === 'fourball' || s.format === 'singles' || s.format === 'scramble';
   const { r, provisional } = readingToShow(s);
   const missing = s.unresolvedHoles?.length ?? 0;
   const pendingTag = missing > 0 ? ` · ${missing} hole${missing > 1 ? 's' : ''} awaiting scores` : '';
@@ -145,7 +145,7 @@ export function describeMatch(s: MatchState, teamNames?: { A: string; B: string 
 /** One-line version for alerts and status bars: "Team Neffy wins 3&2". */
 export function matchSentence(s: MatchState, teamNames: { A: string; B: string }): string {
   const r = describeMatch(s, teamNames);
-  const isMatchPlay = s.format === 'fourball' || s.format === 'singles';
+  const isMatchPlay = s.format === 'fourball' || s.format === 'singles' || s.format === 'scramble';
   if (s.final) {
     if (!s.leader) return isMatchPlay ? 'Match halved' : `Match halved ${r.big}`;
     return isMatchPlay

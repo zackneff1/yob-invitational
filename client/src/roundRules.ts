@@ -31,17 +31,18 @@ export function handicapRule(round: Round): string {
     }
   }
 
+  const cap = 'Max score on any hole: net double bogey.';
   switch (round.format) {
     case 'bestball-qualifier':
-      return `Full playing handicap at ${pct}% (course handicap × ${pct}%, rounded once). Stroke play, so nobody is reduced to scratch.`;
+      return `Full playing handicap at ${pct}% (course handicap × ${pct}%, rounded once). Stroke play, so nobody is reduced to scratch. ${cap}`;
     case 'fourball':
-      return `Four-ball match play: the lowest course handicap in the match plays off scratch and the other three get ${pct}% of the difference in unrounded course handicap, rounded once.`;
+      return `Four-ball match play: the lowest course handicap in the match plays off scratch and the other three get ${pct}% of the difference in unrounded course handicap, rounded once. ${cap}`;
     case 'stableford':
-      return `Full playing handicap at ${pct}% — the event's chosen allowance for aggregate Stableford (course handicap × ${pct}%, rounded once). Nobody is reduced to scratch.`;
+      return `Full playing handicap at ${pct}% for aggregate Stableford (course handicap × ${pct}%, rounded once). Nobody is reduced to scratch. ${cap}`;
     case 'scramble':
-      return 'Team handicap = 35% of the lower + 15% of the higher unrounded 9-hole course handicap, rounded once; the higher side gets the difference. Shown off the lower team — over nine holes that changes nothing in the result.';
+      return `Match play, hole by hole, on the team's net score. Team handicap = 35% of the lower + 15% of the higher unrounded 9-hole course handicap, rounded once; the lower team plays off scratch and the other gets the difference by stroke index. ${cap}`;
     case 'singles':
-      return `Singles match play at ${pct}%: the lower playing handicap plays off scratch, the other gets the difference.`;
+      return `Singles match play at ${pct}%: the lower playing handicap plays off scratch, the other gets the difference. ${cap}`;
   }
 }
 

@@ -9,7 +9,7 @@
  * doesn't hole out taps "Pickup" — an explicit no-return, never a 0.
  */
 import { Course, Round } from '../api/types';
-import { Column, Group, ValueFor, strokesForHole, stablefordPoints } from '../scorecard';
+import { Column, Group, ValueFor, netDoubleBogey, netScore, strokesForHole, stablefordPoints } from '../scorecard';
 import { GroupScoreboard } from './GroupScoreboard';
 
 interface Props {
@@ -44,7 +44,7 @@ export function HoleView({
   const current = course.holes.find((h) => h.number === hole) ?? course.holes[0];
   const isLast = current.number === holeCount;
   const isStableford = round.format === 'stableford';
-  const isMatchPlay = round.format === 'fourball' || round.format === 'singles';
+  const isMatchPlay = round.format === 'fourball' || round.format === 'singles' || round.format === 'scramble';
 
   const strokesOf = (col: Column) => strokesForHole(course, col, current);
 
@@ -68,7 +68,7 @@ export function HoleView({
         .filter((c): c is Column => Boolean(c))
         .map((c) => {
           const g = valueFor(c, current.number);
-          return typeof g === 'number' ? g - strokesOf(c) : g;
+          return typeof g === 'number' ? netScore(g, current.par, strokesOf(c)) : g;
         });
     const a = netsOf(group.match.sideA);
     const b = netsOf(group.match.sideB);
@@ -156,7 +156,8 @@ export function HoleView({
         const strokes = strokesOf(col);
         const gross = valueFor(col, current.number);
         const picked = gross === 'pickup';
-        const net = typeof gross === 'number' ? gross - strokes : null;
+        const net = typeof gross === 'number' ? netScore(gross, current.par, strokes) : null;
+        const capped = typeof gross === 'number' && gross > netDoubleBogey(current.par, strokes);
         return (
           <div className="card hole-player" key={col.entityId}>
             <div className="hole-player-top">
@@ -198,6 +199,7 @@ export function HoleView({
                   <>
                     <span className="stepper-net">
                       net <strong>{net}</strong>
+                      {capped && <span className="muted small"> (max)</span>}
                     </span>
                     {isStableford && (
                       <span className="stepper-pts">

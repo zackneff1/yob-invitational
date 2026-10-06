@@ -294,3 +294,17 @@ export function allocateStrokes(strokes: number, strokeIndexes: number[]): numbe
 export function stablefordPoints(net: number, par: number): number {
   return Math.max(0, 2 + par - net);
 }
+
+/**
+ * Maximum hole score, applied to every format: net double bogey — par + 2 +
+ * the strokes received on the hole (the event's rule; it is also the WHS
+ * adjustment for handicap posting). A gross score above it counts as this.
+ */
+export function netDoubleBogey(par: number, strokesOnThisHole: number): number {
+  return par + 2 + strokesOnThisHole;
+}
+
+/** Net score on a hole after the maximum-score cap: never worse than net double bogey. */
+export function netScore(gross: number, par: number, strokesOnThisHole: number): number {
+  return Math.min(gross, netDoubleBogey(par, strokesOnThisHole)) - strokesOnThisHole;
+}

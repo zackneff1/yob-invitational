@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildSnapshot, scoringBasis } from '../src/services/basis';
-import { allocateStrokes, strokesOnHole } from '../src/services/handicapMath';
+import { strokesOnHole } from '../src/services/handicapMath';
 import { TIE_SETTING_PREFIX, computeMatch, qualifierLeaderboard, ryderBoard } from '../src/services/leaderboard';
 import { closureChange } from '../src/services/matchClosures';
 import { scrambleSidesFor } from '../src/services/scoring';
 import type { Match, Pairing, Round } from '../src/types';
-import { PLAYERS, byName, courseOf, makeDb, makeRng, match, pars, playerScores, plus, roundOf, sideScores } from './helpers';
+import { PLAYERS, byName, courseOf, makeDb, match, pars, playerScores, plus, roundOf, sideScores } from './helpers';
 
 const r2 = roundOf('r2-coral-canyon');
 const r3 = roundOf('r3-ledges');
@@ -14,6 +14,7 @@ const r4 = roundOf('r4-sh-links');
 const r5 = roundOf('r5-sh-champ');
 const r1 = roundOf('r1-conestoga');
 const ids = (...names: string[]) => names.map((n) => byName(n).id);
+const pr = (id: string, a: string, b: string): Pairing => ({ id, roundId: r1.id, name: `${a}/${b}`, playerIds: ids(a, b), teeTime: null });
 
 // ── Format mechanics ──
 
@@ -94,34 +95,60 @@ test('Stableford: a MISSING score leaves the hole unresolved — not final, prov
   assert.equal(s.points.A + s.points.B, 0);
 });
 
-test('scramble: aggregate net decides; off-the-low display cannot change the completed winner or margin', () => {
+test('scramble is hole-by-hole match play on team net: 5 holes won by 1 then 4 lost → A wins 5&4', () => {
   const course = courseOf(r4);
-  const rng = makeRng(7);
-  for (let t = 0; t < 200; t++) {
-    const shuffled = [...PLAYERS].sort(() => rng() - 0.5).slice(0, 4);
-    const m = match('sc', r4.id, shuffled.slice(0, 2).map((p) => p.id), shuffled.slice(2).map((p) => p.id));
-    const gA = course.holes.map((h) => h.par + Math.floor(rng() * 4) - 1);
-    const gB = course.holes.map((h) => h.par + Math.floor(rng() * 4) - 1);
-    const s = computeMatch(makeDb({ matches: [m], scores: [...sideScores(r4.id, m.id, 'A', gA), ...sideScores(r4.id, m.id, 'B', gB)] }), r4, m);
-    // Full team handicaps, no subtraction:
-    const sides = scrambleSidesFor([shuffled.slice(0, 2), shuffled.slice(2)], course);
-    const si = course.holes.map((h) => h.strokeIndex);
-    const netA = gA.reduce((sum, g, i) => sum + g - allocateStrokes(sides.team[0], si)[i], 0);
-    const netB = gB.reduce((sum, g, i) => sum + g - allocateStrokes(sides.team[1], si)[i], 0);
-    const fullLeader = netA < netB ? 'A' : netB < netA ? 'B' : null;
-    assert.equal(s.final, true);
-    assert.equal(s.leader, fullLeader);
-    assert.equal(s.margin, Math.abs(netA - netB));
-  }
+  // Neffy+Jakob and Darren+Little Gerb both have team handicap 2 → no strokes either way.
+  const m = match('sc', r4.id, ids('Neffy', 'Jakob'), ids('Darren', 'Little Gerb'));
+  const p = pars(course);
+  const aGross = p.map((v, i) => (i < 5 ? v - 1 : v + 3));
+  const s = computeMatch(makeDb({ matches: [m], scores: [...sideScores(r4.id, m.id, 'A', aGross), ...sideScores(r4.id, m.id, 'B', p)] }), r4, m);
+  assert.deepEqual(s.sideStrokes, { A: 0, B: 0 });
+  assert.equal(s.final, true);
+  assert.equal(s.leader, 'A');
+  assert.equal(s.margin, 5);
+  assert.equal(s.closeoutRemaining, 4);
+  assert.equal(s.resultKey, 'A:5&4');
+  assert.equal(s.detail, undefined, 'no aggregate totals in match play');
+  // The team with the higher handicap gets the difference, allocated by SI; the lower plays off zero.
+  const m2 = match('sc2', r4.id, ids('Neffy', 'Jakob'), ids('Douglas', 'Schmoo'));
+  const sides = scrambleSidesFor([[byName('Neffy'), byName('Jakob')], [byName('Douglas'), byName('Schmoo')]], course);
+  const s2 = computeMatch(makeDb({ matches: [m2], scores: [...sideScores(r4.id, m2.id, 'A', p), ...sideScores(r4.id, m2.id, 'B', p)] }), r4, m2);
+  assert.equal(s2.sideStrokes!.A, 0);
+  assert.equal(s2.sideStrokes!.B, sides.team[1] - sides.team[0]);
+  // All pars: B wins each stroke hole. Strokes fall on SI 1–4 (holes 7, 9, 5, 3); after
+  // hole 7 B is 3 up with 2 to play, so the match closes out 3&2 before hole 9 is reached.
+  assert.equal(s2.sideStrokes!.B, 4);
+  assert.equal(s2.leader, 'B');
+  assert.equal(s2.final, true);
+  assert.equal(s2.resultKey, 'B:3&2');
 });
 
-test('scramble: a side needs an actual team score; a pickup row for a side is treated as missing', () => {
+test('net double bogey cap applies in every format: a 9 and a net double bogey halve the hole', () => {
+  const [a, b] = ids('Neffy', 'Jakob'); // same handicap → 0 strokes each
+  const m = match('ndb', r5.id, [a], [b]);
+  const p = pars(courseOf(r5));
+  const nine = p.slice(0, 1).map(() => 9);
+  const six = p.slice(0, 1).map((v) => v + 2);
+  const s = computeMatch(makeDb({ matches: [m], scores: [...playerScores(r5.id, a, nine), ...playerScores(r5.id, b, six)] }), r5, m);
+  assert.equal(s.thru, 1);
+  assert.equal(s.leader, null, 'gross 9 is capped to net double bogey and halves against a 6');
+  // Qualifier: a team's blow-up hole costs at most net double bogey.
+  const pairings = [pr('p1', 'Neffy', 'Jakob')];
+  const blow = p.map((v, i) => (i === 0 ? 12 : v));
+  const board = qualifierLeaderboard(makeDb({ pairings, scores: [...playerScores(r1.id, a, blow), ...playerScores(r1.id, b, blow)] }), r1);
+  const row = board.rows[0];
+  // Both have 6 strokes at Conestoga (full PH), one of them on hole 1 (SI 5). Net double bogey
+  // nets to par + 2 whatever the stroke, so hole 1 is +2 and the other five strokes give −5.
+  assert.equal(row.toPar, 2 - 5);
+});
+
+test('scramble: a side needs an actual team score; a pickup row for a side stops the match at that hole', () => {
   const m = match('scp', r4.id, ids('Neffy', 'Jakob'), ids('Darren', 'Little Gerb'));
   const p = pars(courseOf(r4));
   const withPickup = [...p] as (number | 'P')[];
   withPickup[3] = 'P';
   const s = computeMatch(makeDb({ matches: [m], scores: [...sideScores(r4.id, m.id, 'A', withPickup), ...sideScores(r4.id, m.id, 'B', p)] }), r4, m);
-  assert.equal(s.thru, 8);
+  assert.equal(s.thru, 3);
   assert.equal(s.final, false);
 });
 
@@ -253,8 +280,6 @@ test('Cup: points conserve, halves, 7½–7½ is a completed TIE, a side reachin
 });
 
 // ── Round 1: ties, pickups, no return ──
-
-const pr = (id: string, a: string, b: string): Pairing => ({ id, roundId: r1.id, name: `${a}/${b}`, playerIds: ids(a, b), teeTime: null });
 
 test('qualifier: level teams share a position (T1), no tie-break is applied, tie-for-first is flagged until resolved', () => {
   const course = courseOf(r1);

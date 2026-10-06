@@ -5,13 +5,14 @@ import {
   Rational,
   courseHandicapRaw,
   groupStrokes,
+  netScore,
   scrambleSideStrokes,
   stablefordPoints,
   strokesOnHole,
 } from './handicapMath';
 import { MatchState, ScoreboardSide } from './matchState';
 
-export { stablefordPoints, strokesOnHole } from './handicapMath';
+export { netDoubleBogey, netScore, stablefordPoints, strokesOnHole } from './handicapMath';
 
 export interface Column {
   entityType: 'player' | 'side';
@@ -84,7 +85,7 @@ export function statsFor(course: Course, col: Column, valueFor: ValueFor): Colum
       continue;
     }
     if (typeof gross !== 'number') continue;
-    const net = gross - strokesForHole(course, col, hole);
+    const net = netScore(gross, hole.par, strokesForHole(course, col, hole));
     stats.thru += 1;
     stats.gross += gross;
     stats.net += net;
@@ -209,11 +210,11 @@ function fmtToPar(toPar: number): string {
   return toPar > 0 ? `+${toPar}` : `${toPar}`;
 }
 
-/** Net on a hole: a number, 'pickup', or null when nothing is entered. */
-function netOnHole(course: Course, col: Column, hole: Hole, valueFor: ValueFor): number | 'pickup' | null {
+/** Net on a hole (capped at net double bogey): a number, 'pickup', or null when nothing is entered. */
+export function netOnHole(course: Course, col: Column, hole: Hole, valueFor: ValueFor): number | 'pickup' | null {
   const gross = valueFor(col, hole.number);
   if (gross === 'pickup') return 'pickup';
-  return typeof gross === 'number' ? gross - strokesForHole(course, col, hole) : null;
+  return typeof gross === 'number' ? netScore(gross, hole.par, strokesForHole(course, col, hole)) : null;
 }
 
 /**
@@ -298,13 +299,18 @@ export function liveMatchState(
   const provisional = emptyReading();
   const unresolvedHoles: number[] = [];
 
-  if (round.format === 'fourball' || round.format === 'singles') {
+  if (round.format === 'fourball' || round.format === 'singles' || round.format === 'scramble') {
     let diffC = 0;
     let diffP = 0;
     let confirmedOpen = true;
     for (const hole of course.holes) {
-      const valsA = colsA.map((c) => netOn(c, hole));
-      const valsB = colsB.map((c) => netOn(c, hole));
+      // A scramble side's column is its single team ball; a pickup there counts as missing.
+      const ball = (c: Column) => {
+        const v = netOn(c, hole);
+        return round.format === 'scramble' && v === 'pickup' ? null : v;
+      };
+      const valsA = colsA.map(ball);
+      const valsB = colsB.map(ball);
       const resolved = [...valsA, ...valsB].every((v) => v != null);
       const outcome = holeOutcome(valsA, valsB);
       if (outcome == null) break;
@@ -364,22 +370,6 @@ export function liveMatchState(
     provisional.margin = Math.abs(pA - pB);
     provisional.leader = pA > pB ? 'A' : pB > pA ? 'B' : null;
     provisional.complete = resolvedHoles === n;
-  } else if (round.format === 'scramble') {
-    let netA = 0, netB = 0;
-    for (const hole of course.holes) {
-      const a = netOn(colsA[0], hole);
-      const b = netOn(colsB[0], hole);
-      if (typeof a !== 'number' || typeof b !== 'number') continue;
-      confirmed.thru += 1;
-      netA += a;
-      netB += b;
-    }
-    confirmed.totals = { A: netA, B: netB, unit: 'net' };
-    confirmed.margin = Math.abs(netA - netB);
-    confirmed.leader = netA < netB ? 'A' : netB < netA ? 'B' : null;
-    confirmed.complete = confirmed.thru === n;
-    confirmed.decided = confirmed.complete;
-    Object.assign(provisional, confirmed);
   } else {
     return null;
   }

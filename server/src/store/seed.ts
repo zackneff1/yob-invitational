@@ -53,7 +53,7 @@ export function seedRounds(): Round[] {
       teeTimes: ['2:00 PM', '2:10 PM', '2:20 PM'],
       format: 'stableford',
       formatLabel: 'Two-man aggregate Stableford — 3 matches, 1 pt each',
-      allowance: 0.95,
+      allowance: 1,
       playOffLow: true,
       matchCount: 3,
       description:
@@ -73,7 +73,7 @@ export function seedRounds(): Round[] {
       playOffLow: true,
       matchCount: 3,
       description:
-        'Two-man scramble over 9 holes, head to head net.',
+        'Two-man scramble over 9 holes, match play — the lower team net score wins the hole.',
       ...fresh,
     },
     {

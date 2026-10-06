@@ -8,6 +8,8 @@ import {
   courseHandicapRaw,
   differenceFirstStrokes,
   groupStrokes,
+  netDoubleBogey,
+  netScore,
   playingHandicapFromRaw,
   rationalToFixed,
   roundHalfUp,
@@ -132,25 +134,36 @@ test('no floating-point misrounding for any index 0.0–54.0 on any seeded cours
 
 test('policy 2 playing handicaps for all seeded players (6.2a: unrounded CH × allowance, rounded once)', () => {
   const expect: Record<string, number[]> = {
-    // R1 85%, R2 90%, R3 95%, R5 100%  (R4 is a team format)
-    Neffy: [6, 7, 5, 7],
-    Jakob: [6, 7, 5, 7],
-    'Little Gerb': [7, 8, 7, 8], // R3: 6.855 × 95% = 6.51 → 7
+    // R1 85%, R2 90%, R3 100%, R5 100%  (R4 is a team format). Independent BigInt oracle values.
+    Neffy: [6, 7, 6, 7],
+    Jakob: [6, 7, 6, 7],
+    'Little Gerb': [7, 8, 7, 8],
     Darren: [7, 8, 7, 8],
     Raider: [10, 12, 10, 12],
-    Steen: [11, 13, 11, 13],
-    'Cousin Will': [12, 14, 12, 14],
-    Aaron: [14, 16, 14, 16],
-    'Big Gerb': [15, 17, 15, 17],
-    Douglas: [20, 23, 20, 23],
-    Meesa: [20, 24, 21, 24],
-    Schmoo: [25, 29, 26, 29],
+    Steen: [11, 13, 12, 13],
+    'Cousin Will': [12, 14, 13, 14],
+    Aaron: [14, 16, 15, 16],
+    'Big Gerb': [15, 17, 16, 17],
+    Douglas: [20, 23, 21, 23],
+    Meesa: [20, 24, 22, 24],
+    Schmoo: [25, 29, 27, 29],
   };
   const ids = ['r1-conestoga', 'r2-coral-canyon', 'r3-ledges', 'r5-sh-champ'];
+  assert.equal(roundOf('r3-ledges').allowance, 1, 'Stableford is played at 100%');
   for (const p of PLAYERS) {
     const got = ids.map((id) => playingHandicap(p.handicapIndex, courseOf(roundOf(id)), roundOf(id).allowance));
     assert.deepEqual(got, expect[p.name], p.name);
   }
+});
+
+test('net double bogey cap: gross above par + 2 + strokes counts as that', () => {
+  assert.equal(netDoubleBogey(4, 0), 6);
+  assert.equal(netDoubleBogey(5, 2), 9);
+  assert.equal(netScore(9, 4, 0), 6);
+  assert.equal(netScore(6, 4, 0), 6);
+  assert.equal(netScore(5, 4, 0), 5);
+  assert.equal(netScore(10, 4, 1), 6); // cap 7, minus the stroke
+  assert.equal(netScore(3, 4, 1), 2);
 });
 
 test('format rules: full PH for R1 and R3, difference of PH for singles, difference-first for four-ball', () => {

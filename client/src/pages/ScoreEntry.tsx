@@ -23,6 +23,8 @@ import {
   Group,
   ValueFor,
   buildGroups,
+  netDoubleBogey,
+  netScore,
   scoringCourseOf,
   statsFor,
   strokesForHole,
@@ -98,7 +100,8 @@ function ScoreCard({
                   const strokes = strokesForHole(course, c, hole);
                   const value = valueFor(c, hole.number);
                   const picked = value === 'pickup';
-                  const net = typeof value === 'number' ? value - strokes : null;
+                  const net = typeof value === 'number' ? netScore(value, hole.par, strokes) : null;
+                  const capped = typeof value === 'number' && value > netDoubleBogey(hole.par, strokes);
                   return (
                     <td key={c.entityId}>
                       <div className="score-cell">
@@ -140,9 +143,10 @@ function ScoreCard({
                         <span className="net-line">
                           {picked ? (
                             'pickup'
-                          ) : net != null && strokes > 0 ? (
+                          ) : net != null && (strokes > 0 || capped) ? (
                             <>
                               net <strong>{net}</strong>
+                              {capped ? ' max' : ''}
                             </>
                           ) : c.entityType === 'player' && value === '' ? (
                             <button
@@ -322,9 +326,25 @@ export function ScoreEntryPage() {
     return buildGroups(trip.data, activeRoundId, (t) => localTime(t, z));
   }, [trip.data, activeRoundId]);
 
-  // Default to the group the signed-in player is in.
+  /** The group the signed-in player belongs to, if any. */
+  const myGroup = groups.find((g) =>
+    g.columns.some(
+      (c) =>
+        (c.entityType === 'player' && c.entityId === auth?.player.id) ||
+        (c.entityType === 'side' &&
+          g.match?.namesA.concat(g.match.namesB).includes(auth?.player.name ?? '')),
+    ),
+  );
+
+  // Default to the group the signed-in player is in. Players stay in their
+  // own group; only admins can switch to another group to fix a card.
   useEffect(() => {
     if (!groups.length) return;
+    if (!isAdmin) {
+      const want = myGroup?.id ?? '';
+      if (groupId !== want) setGroupId(want);
+      return;
+    }
     if (groups.some((g) => g.id === groupId)) return;
     const mine = groups.find((g) =>
       g.columns.some(
@@ -335,7 +355,7 @@ export function ScoreEntryPage() {
       ),
     );
     setGroupId((mine ?? groups[0]).id);
-  }, [groups, groupId, auth?.player.id, auth?.player.name]);
+  }, [groups, groupId, auth?.player.id, auth?.player.name, isAdmin, myGroup?.id]);
 
   useEffect(() => {
     if (!entryError) return;
@@ -536,7 +556,13 @@ export function ScoreEntryPage() {
             </p>
           )}
 
-          {groups.length > 1 && (
+          {!isAdmin && groups.length > 0 && !myGroup && (
+            <p className="muted">
+              You&apos;re not in a group for this round yet — the admins set the lineups.
+            </p>
+          )}
+
+          {isAdmin && groups.length > 1 && (
             <select
               className="group-select"
               value={groupId}
@@ -608,7 +634,8 @@ export function ScoreEntryPage() {
       {group && view === 'card' && (
         <p className="muted small">
           <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.{' '}
-          {handicapRule(round)} Yardages show “—” until an admin enters them in Admin → Courses.
+          {handicapRule(round)} Maximum score on any hole is net double bogey (par + 2 + your
+          strokes there); anything higher counts as that. Yardages show “—” until an admin enters them in Admin → Courses.
         </p>
       )}
       {!inPlay && (

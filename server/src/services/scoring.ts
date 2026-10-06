@@ -7,6 +7,7 @@ import {
   courseHandicapFromRaw,
   courseHandicapRaw,
   groupStrokes,
+  netScore,
   playingHandicapFromRaw,
   scrambleSideStrokes,
   strokesOnHole,
@@ -14,6 +15,8 @@ import {
 
 export {
   allocateStrokes,
+  netDoubleBogey,
+  netScore,
   stablefordPoints,
   strokesOnHole,
   SCORING_POLICY_VERSION,
@@ -135,14 +138,17 @@ export function scrambleSidesFor(
   );
 }
 
-/** Net score for a player on a hole; 'pickup' or null pass straight through. */
+/**
+ * Net score for a player on a hole, capped at net double bogey; 'pickup' or
+ * null pass straight through.
+ */
 export function netFor(
   map: ScoreMap,
   info: PlayerHandicapInfo,
-  hole: { number: number; strokeIndex: number },
+  hole: { number: number; strokeIndex: number; par: number },
   holeCount: number,
 ): GrossValue {
   const gross = grossFor(map, 'player', info.playerId, hole.number);
   if (gross == null || gross === 'pickup') return gross;
-  return gross - strokesOnHole(info.effectiveHandicap, hole.strokeIndex, holeCount);
+  return netScore(gross, hole.par, strokesOnHole(info.effectiveHandicap, hole.strokeIndex, holeCount));
 }

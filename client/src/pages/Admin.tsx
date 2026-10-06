@@ -159,6 +159,65 @@ function QualifierTie({ round, trip, onSaved, notify }: TabProps & { round: Roun
   );
 }
 
+/** Handicap allowance for a round (whole percent). Locked once the round is frozen. */
+function AllowanceControl({
+  round,
+  onSaved,
+  notify,
+}: {
+  round: Round;
+  onSaved: () => void;
+  notify: (msg: string) => void;
+}) {
+  const [pct, setPct] = useState(String(Math.round(round.allowance * 100)));
+  useEffect(() => setPct(String(Math.round(round.allowance * 100))), [round.allowance]);
+  const dirty = Number(pct) !== Math.round(round.allowance * 100);
+  const save = async () => {
+    const n = Number(pct);
+    if (!Number.isInteger(n) || n < 50 || n > 100) {
+      notify('⚠️ Allowance is a whole percentage between 50 and 100');
+      return;
+    }
+    const ok = await attempt(
+      () =>
+        api(`/api/admin/rounds/${round.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ allowance: n / 100 }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
+    notify(`${roundNickname(round)} allowance set to ${n}%`);
+    onSaved();
+  };
+  return (
+    <div className="allowance-row muted small">
+      Allowance{' '}
+      <input
+        className="num-input"
+        type="number"
+        inputMode="numeric"
+        min={50}
+        max={100}
+        step={1}
+        value={pct}
+        disabled={round.frozen}
+        onChange={(e) => setPct(e.target.value)}
+      />
+      %
+      {round.frozen ? (
+        <span> (frozen with the round)</span>
+      ) : (
+        dirty && (
+          <button className="ghost" onClick={() => void save()}>
+            Save
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
 /** Start / end rounds — this is what scopes everyone's Score tab. */
 function RoundsTab({ trip, onSaved, notify }: TabProps) {
   const live = liveRound(trip.rounds);
@@ -223,6 +282,9 @@ function RoundsTab({ trip, onSaved, notify }: TabProps) {
               {r.startedAt ? ` · started ${fmtWhen(r.startedAt)}` : ''}
               {r.endedAt ? ` · ended ${fmtWhen(r.endedAt)}` : ''}
             </div>
+            {r.format !== 'scramble' && (
+              <AllowanceControl round={r} onSaved={onSaved} notify={notify} />
+            )}
           </div>
           <div className="row-actions">
             {r.status === 'upcoming' && (
@@ -487,18 +549,36 @@ function TeamsTab({ trip, onSaved, notify }: TabProps) {
               Captain
               <select
                 value={team.captainId ?? ''}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const captainId = e.target.value || null;
+                  // Picking a captain also puts them on this team (and off the other).
                   setTeams((prev) =>
-                    prev.map((t) =>
-                      t.id === team.id ? { ...t, captainId: e.target.value || null } : t,
-                    ),
-                  )
-                }
+                    prev.map((t) => {
+                      if (t.id !== team.id) {
+                        return captainId
+                          ? {
+                              ...t,
+                              playerIds: t.playerIds.filter((id) => id !== captainId),
+                              captainId: t.captainId === captainId ? null : t.captainId,
+                            }
+                          : t;
+                      }
+                      return {
+                        ...t,
+                        captainId,
+                        playerIds:
+                          captainId && !t.playerIds.includes(captainId)
+                            ? [captainId, ...t.playerIds]
+                            : t.playerIds,
+                      };
+                    }),
+                  );
+                }}
               >
                 <option value="">—</option>
-                {team.playerIds.map((id) => (
-                  <option key={id} value={id}>
-                    {trip.players.find((p) => p.id === id)?.name}
+                {trip.players.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
                   </option>
                 ))}
               </select>

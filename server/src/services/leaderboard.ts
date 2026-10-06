@@ -8,6 +8,7 @@ import {
   grossFor,
   handicapInfoFor,
   netFor,
+  netScore,
   scrambleSidesFor,
   stablefordPoints,
   strokesOnHole,
@@ -263,22 +264,46 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
     missingMap.set(entityId, m);
   };
 
-  if (round.format === 'fourball' || round.format === 'singles') {
+  const isMatchPlay =
+    round.format === 'fourball' || round.format === 'singles' || round.format === 'scramble';
+  if (round.format === 'scramble') {
+    const sides = scrambleSidesFor([playersA, playersB], course, basis.policy);
+    sideStrokes = { A: sides.strokes[0], B: sides.strokes[1] };
+  }
+  /** Each side's balls on a hole: player nets, or the single team net in a scramble. */
+  const sideValues = (hole: (typeof course.holes)[number]): { valsA: GrossValue[]; valsB: GrossValue[] } => {
+    if (round.format !== 'scramble') {
+      return { valsA: infosA.map((i) => netFor(map, i, hole, n)), valsB: infosB.map((i) => netFor(map, i, hole, n)) };
+    }
+    const side = (which: 'A' | 'B'): GrossValue => {
+      const gross = grossFor(map, 'side', `${match.id}:${which}`, hole.number);
+      // A side must return a team score; a stray pickup row counts as missing.
+      if (typeof gross !== 'number') return null;
+      return netScore(gross, hole.par, strokesOnHole(sideStrokes![which], hole.strokeIndex, n));
+    };
+    return { valsA: [side('A')], valsB: [side('B')] };
+  };
+
+  if (isMatchPlay) {
     // Two passes over the same holes: confirmed stops at the first hole with
     // any ball missing; provisional continues while each side has at least one.
     let diffC = 0;
     let diffP = 0;
     let confirmedOpen = true;
     for (const hole of course.holes) {
-      const valsA = infosA.map((i) => netFor(map, i, hole, n));
-      const valsB = infosB.map((i) => netFor(map, i, hole, n));
+      const { valsA, valsB } = sideValues(hole);
       const resolved = [...valsA, ...valsB].every((v) => v != null);
       const outcome = holeOutcome(valsA, valsB);
       if (outcome == null) break; // a whole side is missing: nothing further can be read
       if (!resolved) {
         unresolvedHoles.push(hole.number);
-        infosA.forEach((i, k) => valsA[k] == null && noteMissing(i.playerId, i.name, hole.number));
-        infosB.forEach((i, k) => valsB[k] == null && noteMissing(i.playerId, i.name, hole.number));
+        if (round.format === 'scramble') {
+          if (valsA[0] == null) noteMissing(`${match.id}:A`, teamA.name, hole.number);
+          if (valsB[0] == null) noteMissing(`${match.id}:B`, teamB.name, hole.number);
+        } else {
+          infosA.forEach((i, k) => valsA[k] == null && noteMissing(i.playerId, i.name, hole.number));
+          infosB.forEach((i, k) => valsB[k] == null && noteMissing(i.playerId, i.name, hole.number));
+        }
       }
       // provisional
       if (!provisional.decided) {
@@ -344,30 +369,6 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
     provisional.leader = pA > pB ? 'A' : pB > pA ? 'B' : null;
     provisional.complete = resolvedHoles === n;
     detail = confirmed.complete ? { totalA: cA, totalB: cB, unit: 'pts' } : { totalA: pA, totalB: pB, unit: 'pts' };
-  } else if (round.format === 'scramble') {
-    const sides = scrambleSidesFor([playersA, playersB], course, basis.policy);
-    sideStrokes = { A: sides.strokes[0], B: sides.strokes[1] };
-    let netA = 0, netB = 0;
-    for (const hole of course.holes) {
-      const grossA = grossFor(map, 'side', `${match.id}:A`, hole.number);
-      const grossB = grossFor(map, 'side', `${match.id}:B`, hole.number);
-      // Sides must return a number; a pickup row for a side is treated as missing.
-      if (typeof grossA !== 'number' || typeof grossB !== 'number') {
-        if (grossA == null && grossB != null) noteMissing(`${match.id}:A`, teamA.name, hole.number);
-        if (grossB == null && grossA != null) noteMissing(`${match.id}:B`, teamB.name, hole.number);
-        continue;
-      }
-      confirmed.thru += 1;
-      netA += grossA - strokesOnHole(sideStrokes.A, hole.strokeIndex, n);
-      netB += grossB - strokesOnHole(sideStrokes.B, hole.strokeIndex, n);
-    }
-    confirmed.totals = { A: netA, B: netB, unit: 'net' };
-    confirmed.margin = Math.abs(netA - netB);
-    confirmed.leader = netA < netB ? 'A' : netB < netA ? 'B' : null;
-    confirmed.complete = confirmed.thru === n;
-    confirmed.decided = confirmed.complete;
-    Object.assign(provisional, confirmed);
-    detail = { totalA: netA, totalB: netB, unit: 'net' };
   }
 
   // ── Final result, points, identity ──
@@ -376,7 +377,6 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
   let points = { A: 0, B: 0 };
   let provisionalPoints = { A: 0, B: 0 };
   let resultKey: string | null = null;
-  const isMatchPlay = round.format === 'fourball' || round.format === 'singles';
   const nameOf = (s: 'A' | 'B' | null) => (s === 'A' ? teamA.name : s === 'B' ? teamB.name : null);
 
   const describe = (r: MatchReading): string => {
