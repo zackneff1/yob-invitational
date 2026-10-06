@@ -1,22 +1,34 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { enqueueScores, flushQueue, pendingScores } from '../api/queue';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  discardRejected,
+  enqueueScores,
+  flushQueue,
+  keyOf,
+  onQueueChanged,
+  pendingScores,
+  rejectedDrafts,
+} from '../api/queue';
 import { Course, Round } from '../api/types';
 import { useAuth } from '../auth';
 import { GroupScoreboard } from '../components/GroupScoreboard';
 import { HoleView } from '../components/HoleView';
 import { useScores, useTrip } from '../hooks';
 import { activeSessionRoundId, usePlaySession } from '../playSession';
+import { handicapRule } from '../roundRules';
 import { liveRound, roundShort, statusLabel } from '../rounds';
 import {
+  CellValue,
   Column,
   Group,
   ValueFor,
   buildGroups,
+  scoringCourseOf,
   statsFor,
   strokesForHole,
   totalYardsOf,
 } from '../scorecard';
+import { parseTypedScore } from '../scoreInput';
 import { courseClockNote, localTime, zoneFor } from '../teeTimes';
 
 /**
@@ -31,17 +43,19 @@ function ScoreCard({
   round,
   valueFor,
   setScore,
+  onPickup,
 }: {
   course: Course;
   group: Group;
   round: Round;
   valueFor: ValueFor;
   setScore: (col: Column, hole: number, raw: string) => void;
+  onPickup: (col: Column, hole: number) => void;
 }) {
   const totalYards = totalYardsOf(course);
   const isStableford = round.format === 'stableford';
   const allStats = group.columns.map((col) => ({ col, stats: statsFor(course, col, valueFor) }));
-  const anyScores = allStats.some(({ stats }) => stats.thru > 0);
+  const anyScores = allStats.some(({ stats }) => stats.thru + stats.pickups > 0);
 
   return (
     <>
@@ -82,21 +96,35 @@ function ScoreCard({
                 <td className="muted small">{hole.strokeIndex}</td>
                 {group.columns.map((c) => {
                   const strokes = strokesForHole(course, c, hole);
-                  const gross = valueFor(c, hole.number);
-                  const net = typeof gross === 'number' ? gross - strokes : null;
+                  const value = valueFor(c, hole.number);
+                  const picked = value === 'pickup';
+                  const net = typeof value === 'number' ? value - strokes : null;
                   return (
                     <td key={c.entityId}>
                       <div className="score-cell">
                         <div className="score-cell-top">
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={1}
-                            max={20}
-                            aria-label={`${c.label} gross strokes, hole ${hole.number}`}
-                            value={gross}
-                            onChange={(e) => setScore(c, hole.number, e.target.value)}
-                          />
+                          {picked ? (
+                            <button
+                              className="ghost cell-pickup"
+                              title="Picked up — tap to clear"
+                              aria-label={`${c.label} picked up on hole ${hole.number}; tap to clear`}
+                              onClick={() => setScore(c, hole.number, '')}
+                            >
+                              P
+                            </button>
+                          ) : (
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              step={1}
+                              min={1}
+                              max={20}
+                              aria-label={`${c.label} gross strokes, hole ${hole.number}`}
+                              value={value}
+                              onChange={(e) => setScore(c, hole.number, e.target.value)}
+                            />
+                          )}
                           <span
                             className="stroke-marks"
                             title={
@@ -110,10 +138,20 @@ function ScoreCard({
                         </div>
                         {/* Net only says something when a stroke was applied. */}
                         <span className="net-line">
-                          {net != null && strokes > 0 ? (
+                          {picked ? (
+                            'pickup'
+                          ) : net != null && strokes > 0 ? (
                             <>
                               net <strong>{net}</strong>
                             </>
+                          ) : c.entityType === 'player' && value === '' ? (
+                            <button
+                              className="link-btn"
+                              onClick={() => onPickup(c, hole.number)}
+                              title="Didn't hole out"
+                            >
+                              pickup
+                            </button>
                           ) : (
                             ' '
                           )}
@@ -135,6 +173,7 @@ function ScoreCard({
               {allStats.map(({ col, stats }) => (
                 <td key={col.entityId}>
                   <strong>{stats.thru ? stats.gross : '—'}</strong>
+                  {stats.pickups > 0 && <div className="muted small">{stats.pickups} pickup{stats.pickups > 1 ? 's' : ''}</div>}
                 </td>
               ))}
             </tr>
@@ -155,7 +194,7 @@ function ScoreCard({
                 </td>
                 {allStats.map(({ col, stats }) => (
                   <td key={col.entityId}>
-                    <strong>{stats.thru ? stats.points : '—'}</strong>
+                    <strong>{stats.thru + stats.pickups ? stats.points : '—'}</strong>
                   </td>
                 ))}
               </tr>
@@ -181,7 +220,10 @@ function StartRound({
   valueFor: ValueFor;
   onStart: () => void;
 }) {
-  const played = group.columns.some((col) => statsFor(course, col, valueFor).thru > 0);
+  const played = group.columns.some((col) => {
+    const s = statsFor(course, col, valueFor);
+    return s.thru + s.pickups > 0;
+  });
   return (
     <>
       <div className="card start-card">
@@ -198,7 +240,8 @@ function StartRound({
           <span>⛳</span>
           <span>
             Always enter your <strong>gross</strong> score — the actual shots you took. The app
-            takes the strokes off and shows the <strong>net</strong> itself.
+            takes the strokes off and shows the <strong>net</strong> itself. Didn’t hole out? Tap{' '}
+            <strong>Pickup</strong> — never a 0.
           </span>
         </p>
       </div>
@@ -206,6 +249,34 @@ function StartRound({
         <GroupScoreboard course={course} round={round} group={group} valueFor={valueFor} />
       )}
     </>
+  );
+}
+
+/** Drafts the server refused, with its reason — never silently dropped. */
+function RejectedDrafts({ groups }: { groups: Group[] }) {
+  const drafts = useSyncExternalStore(onQueueChanged, rejectedDrafts, rejectedDrafts);
+  if (!drafts.length) return null;
+  const labelOf = (entityId: string) =>
+    groups.flatMap((g) => g.columns).find((c) => c.entityId === entityId)?.label ?? entityId;
+  return (
+    <div className="card rejected-panel">
+      <h2>Not saved</h2>
+      <p className="muted small">
+        The server refused these entries. Re-enter the hole to replace one, or discard it.
+      </p>
+      {drafts.map((d) => (
+        <div key={keyOf(d)} className="rejected-row">
+          <div>
+            <strong>{labelOf(d.entityId)}</strong>, hole {d.hole}:{' '}
+            {d.pickup ? 'pickup' : d.strokes == null ? 'clear' : `${d.strokes} strokes`}
+            <div className="muted small">{d.reason}</div>
+          </div>
+          <button className="ghost" onClick={() => discardRejected(keyOf(d))}>
+            Discard
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -218,12 +289,13 @@ export function ScoreEntryPage() {
   const [roundId, setRoundId] = useState<string>(activeSessionRoundId);
   const [groupId, setGroupId] = useState<string>('');
   const [view, setView] = useState<'play' | 'card'>('play');
+  const [entryError, setEntryError] = useState<string | null>(null);
   // Session-local edits, keyed entityType|entityId|hole — shown immediately,
   // synced through the offline queue. The ref mirrors the state and is written
   // synchronously, so back-to-back taps on the +/− stepper each build on the
   // previous one instead of all reading the same pre-render value.
-  const [local, setLocal] = useState<Record<string, number | null>>({});
-  const localRef = useRef<Record<string, number | null>>({});
+  const [local, setLocal] = useState<Record<string, number | null | 'pickup'>>({});
+  const localRef = useRef<Record<string, number | null | 'pickup'>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const allRounds = trip.data?.rounds ?? [];
@@ -236,7 +308,7 @@ export function ScoreEntryPage() {
     : (live?.id ?? rounds[0]?.id ?? '');
   const scores = useScores(activeRoundId || undefined);
   const round = rounds.find((r) => r.id === activeRoundId);
-  const course = trip.data?.courses.find((c) => c.id === round?.courseId);
+  const course = trip.data && round ? scoringCourseOf(trip.data, round) : undefined;
   const zone = zoneFor(course);
   const { session, start, end, goToHole } = usePlaySession(
     activeRoundId,
@@ -258,11 +330,18 @@ export function ScoreEntryPage() {
       g.columns.some(
         (c) =>
           (c.entityType === 'player' && c.entityId === auth?.player.id) ||
-          (c.entityType === 'side' && g.match?.namesA.concat(g.match.namesB).includes(auth?.player.name ?? '')),
+          (c.entityType === 'side' &&
+            g.match?.namesA.concat(g.match.namesB).includes(auth?.player.name ?? '')),
       ),
     );
     setGroupId((mine ?? groups[0]).id);
   }, [groups, groupId, auth?.player.id, auth?.player.name]);
+
+  useEffect(() => {
+    if (!entryError) return;
+    const t = setTimeout(() => setEntryError(null), 5000);
+    return () => clearTimeout(t);
+  }, [entryError]);
 
   const group = groups.find((g) => g.id === groupId);
   const totalYards = course ? totalYardsOf(course) : null;
@@ -270,9 +349,12 @@ export function ScoreEntryPage() {
   const inPlay = view === 'play' && !!session;
 
   /** Latest value for a cell, reading the synchronous ref rather than state. */
-  const readCurrent = (col: Column, hole: number): number | null => {
+  const readCurrent = (col: Column, hole: number): CellValue => {
     const key = `${col.entityType}|${col.entityId}|${hole}`;
-    if (key in localRef.current) return localRef.current[key];
+    if (key in localRef.current) {
+      const v = localRef.current[key];
+      return v == null ? '' : v;
+    }
     const queued = pendingScores().find(
       (q) =>
         q.roundId === activeRoundId &&
@@ -280,35 +362,26 @@ export function ScoreEntryPage() {
         q.entityId === col.entityId &&
         q.hole === hole,
     );
-    if (queued) return queued.strokes;
+    if (queued) return queued.pickup ? 'pickup' : (queued.strokes ?? '');
     const server = scores.data?.find(
       (s) => s.entityType === col.entityType && s.entityId === col.entityId && s.hole === hole,
     );
-    return server?.strokes ?? null;
+    if (!server) return '';
+    return server.pickup ? 'pickup' : (server.strokes ?? '');
   };
 
   const valueFor: ValueFor = (col, hole) => {
     const key = `${col.entityType}|${col.entityId}|${hole}`;
-    if (key in local) return local[key] ?? '';
-    const queued = pendingScores().find(
-      (q) =>
-        q.roundId === activeRoundId &&
-        q.entityType === col.entityType &&
-        q.entityId === col.entityId &&
-        q.hole === hole,
-    );
-    if (queued) return queued.strokes ?? '';
-    const server = scores.data?.find(
-      (s) => s.entityType === col.entityType && s.entityId === col.entityId && s.hole === hole,
-    );
-    return server?.strokes ?? '';
+    if (key in local) {
+      const v = local[key];
+      return v == null ? '' : v;
+    }
+    return readCurrent(col, hole);
   };
 
-  const setScore = (col: Column, hole: number, raw: string) => {
-    const strokes = raw === '' ? null : Math.max(1, Math.min(20, Number(raw)));
-    if (raw !== '' && Number.isNaN(strokes)) return;
+  const commit = (col: Column, hole: number, value: number | null | 'pickup') => {
     const key = `${col.entityType}|${col.entityId}|${hole}`;
-    localRef.current = { ...localRef.current, [key]: strokes };
+    localRef.current = { ...localRef.current, [key]: value };
     setLocal(localRef.current);
     enqueueScores([
       {
@@ -316,7 +389,8 @@ export function ScoreEntryPage() {
         entityType: col.entityType,
         entityId: col.entityId,
         hole,
-        strokes,
+        strokes: value === 'pickup' ? null : value,
+        pickup: value === 'pickup',
         updatedAt: Date.now(),
       },
     ]);
@@ -332,11 +406,29 @@ export function ScoreEntryPage() {
     }, 1500);
   };
 
+  const setScore = (col: Column, hole: number, raw: string) => {
+    const parsed = parseTypedScore(raw);
+    if (!parsed.ok) {
+      setEntryError(parsed.message);
+      return;
+    }
+    commit(col, hole, parsed.strokes);
+  };
+
+  const setPickup = (col: Column, hole: number) => {
+    if (col.entityType !== 'player') {
+      setEntryError('A scramble side has to return a team score.');
+      return;
+    }
+    commit(col, hole, 'pickup');
+  };
+
   /** Stepper: nudge a score by one, starting from par when nothing's entered. */
   const adjustScore = (col: Column, hole: number, delta: number, par: number) => {
     const current = readCurrent(col, hole);
-    const next = current == null ? par : current + delta;
-    setScore(col, hole, String(Math.max(1, Math.min(20, next))));
+    const next = typeof current === 'number' ? current + delta : par;
+    if (next < 1 || next > 20) return;
+    commit(col, hole, next);
   };
 
   /** Only offered on the last hole — no way to bail out mid-round by accident. */
@@ -364,6 +456,7 @@ export function ScoreEntryPage() {
             here. Until then, the Trip tab has the schedule and the Leaderboard has results so far.
           </p>
         </div>
+        <RejectedDrafts groups={[]} />
       </div>
     );
   }
@@ -372,6 +465,7 @@ export function ScoreEntryPage() {
 
   return (
     <div className="page">
+      {entryError && <p className="entry-error">{entryError}</p>}
       {/* Out on the course the screen belongs to the hole in front of you: no
           round switcher, no group picker, no course blurb. Those all come back
           on the full card, which is also the way out of play mode. */}
@@ -427,6 +521,13 @@ export function ScoreEntryPage() {
             </div>
           )}
 
+          {round.snapshotMissing && (
+            <p className="tz-note">
+              ⚠️ This round was started before scoring settings were frozen, so it is scored from
+              the current settings.
+            </p>
+          )}
+
           {clockNote && <p className="tz-note">⏰ {clockNote}</p>}
 
           {groups.length === 0 && (
@@ -475,6 +576,7 @@ export function ScoreEntryPage() {
               round={round}
               valueFor={valueFor}
               setScore={setScore}
+              onPickup={setPickup}
             />
           ) : session ? (
             <HoleView
@@ -484,6 +586,7 @@ export function ScoreEntryPage() {
               hole={session.hole}
               valueFor={valueFor}
               setScore={setScore}
+              onPickup={setPickup}
               onAdjust={adjustScore}
               onGoToHole={goToHole}
               onFinish={finishRound}
@@ -500,12 +603,12 @@ export function ScoreEntryPage() {
         </>
       )}
 
+      <RejectedDrafts groups={groups} />
+
       {group && view === 'card' && (
         <p className="muted small">
-          <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.
-          Strokes come off the low man — the whole 12-man field in Round 1, your match in
-          Rounds 2–5 — so the lowest handicap gets none. Yardages show “—” until an admin enters
-          them in Admin → Courses.
+          <strong>*</strong> = you get a stroke on that hole, <strong>**</strong> = two strokes.{' '}
+          {handicapRule(round)} Yardages show “—” until an admin enters them in Admin → Courses.
         </p>
       )}
       {!inPlay && (

@@ -34,10 +34,11 @@ export function PlayerStrip({
     <div className="score-summary">
       {group.columns.map((col) => {
         const stats = statsFor(course, col, valueFor);
+        const played = stats.thru + stats.pickups;
         return (
           <div className="summary-card" key={col.entityId}>
             <div className="summary-name">{col.label}</div>
-            {stats.thru > 0 ? (
+            {played > 0 ? (
               <>
                 <div className="summary-figures">
                   <span className="summary-net">
@@ -47,7 +48,8 @@ export function PlayerStrip({
                 </div>
                 <div className="summary-thru">
                   {primary === 'points' ? `${stats.net} net · ` : ''}
-                  {stats.gross} gross · thru {stats.thru}
+                  {stats.gross} gross · thru {played}
+                  {stats.pickups > 0 ? ` · ${stats.pickups} pickup${stats.pickups > 1 ? 's' : ''}` : ''}
                 </div>
               </>
             ) : (

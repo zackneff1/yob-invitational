@@ -5,7 +5,18 @@ import { Course, Match, Pairing, Round, RoundStatus, RyderTeam, Trip } from '../
 import { LODGING } from '../lodging';
 import { liveRound, roundNickname, roundShort, statusLabel } from '../rounds';
 import { localTime, zoneFor } from '../teeTimes';
-import { useTrip } from '../hooks';
+import { useRoundLeaderboard, useTrip } from '../hooks';
+
+/** Run an admin call and surface its error message instead of a silent failure. */
+async function attempt(action: () => Promise<void>, notify: (msg: string) => void): Promise<boolean> {
+  try {
+    await action();
+    return true;
+  } catch (err) {
+    notify(`⚠️ ${err instanceof Error ? err.message : 'Something went wrong'}`);
+    return false;
+  }
+}
 
 type Tab =
   | 'rounds'
@@ -85,9 +96,73 @@ function fmtWhen(ms: number): string {
   });
 }
 
+/** Records how a tie for first in the qualifier was resolved — the app never picks. */
+function QualifierTie({ round, trip, onSaved, notify }: TabProps & { round: Round }) {
+  const board = useRoundLeaderboard(round.id);
+  const [pairingId, setPairingId] = useState('');
+  const [reason, setReason] = useState('');
+  if (board.data?.type !== 'qualifier' || !board.data.tieForFirst) return null;
+  const tie = board.data.tieForFirst;
+  const rows = board.data.rows;
+  const nameOf = (id: string) => rows.find((r) => r.pairingId === id)?.name ?? id;
+  const save = async (id: string | null) => {
+    const ok = await attempt(
+      () =>
+        api(`/api/admin/rounds/${round.id}/tie-resolution`, {
+          method: 'PUT',
+          body: JSON.stringify({ pairingId: id, reason }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
+    notify(id ? 'Tie resolution recorded' : 'Tie resolution cleared');
+    setReason('');
+    onSaved();
+    void board.refetch();
+  };
+  return (
+    <div className="card tie-banner">
+      <strong>Qualifier tied for first:</strong> {tie.pairingIds.map(nameOf).join(' and ')}.
+      {tie.resolution ? (
+        <p>
+          Recorded: <strong>{nameOf(tie.resolution.pairingId)}</strong> — “{tie.resolution.reason}” (
+          {trip.players.find((p) => p.id === tie.resolution!.by)?.name ?? tie.resolution.by}).{' '}
+          <button className="ghost" onClick={() => void save(null)}>
+            Clear
+          </button>
+        </p>
+      ) : (
+        <>
+          <p className="muted small">
+            The organizers decide how the tie is broken (the app has no tie-break rule). Record
+            the decision and the reason here so it is on the leaderboard.
+          </p>
+          <select value={pairingId} onChange={(e) => setPairingId(e.target.value)}>
+            <option value="">Winning team…</option>
+            {tie.pairingIds.map((id) => (
+              <option key={id} value={id}>
+                {nameOf(id)}
+              </option>
+            ))}
+          </select>
+          <input
+            value={reason}
+            placeholder="Reason, e.g. back-nine countback agreed by all; coin toss…"
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <button disabled={!pairingId || !reason.trim()} onClick={() => void save(pairingId)}>
+            Record decision
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Start / end rounds — this is what scopes everyone's Score tab. */
 function RoundsTab({ trip, onSaved, notify }: TabProps) {
   const live = liveRound(trip.rounds);
+  const qualifier = trip.rounds.find((r) => r.format === 'bestball-qualifier');
 
   const setStatus = async (round: Round, status: RoundStatus) => {
     const nick = roundNickname(round);
@@ -99,12 +174,25 @@ function RoundsTab({ trip, onSaved, notify }: TabProps) {
       )
         return;
     }
+    if (
+      status === 'live' &&
+      !round.frozen &&
+      !window.confirm(
+        `Start ${nick}? Its course card, every index and the allowance are frozen for this round from now on.`,
+      )
+    )
+      return;
     if (status === 'final' && !window.confirm(`End ${nick}? Players can no longer enter scores for it (admins still can).`)) return;
     if (status === 'upcoming' && !window.confirm(`Put ${nick} back to "upcoming"? Scores are kept; it just stops being the live round.`)) return;
-    await api(`/api/admin/rounds/${round.id}/status`, {
-      method: 'PUT',
-      body: JSON.stringify({ status }),
-    });
+    const ok = await attempt(
+      () =>
+        api(`/api/admin/rounds/${round.id}/status`, {
+          method: 'PUT',
+          body: JSON.stringify({ status }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
     notify(status === 'live' ? `${nick} started` : status === 'final' ? `${nick} ended` : `${nick} reset`);
     onSaved();
   };
@@ -116,8 +204,11 @@ function RoundsTab({ trip, onSaved, notify }: TabProps) {
         Everyone&apos;s Score tab shows the <strong>live</strong> round only, and the Leaderboard
         offers rounds that have started plus the next one up. Start a round when the first group
         tees off and end it when the last card is in. Only one round is live at a time — starting
-        the next one ends the current one.
+        the next one ends the current one. Starting a round <strong>freezes</strong> its scoring
+        settings (card, indexes, allowance), so later edits in Admin can&apos;t change a played
+        round.
       </p>
+      {qualifier && <QualifierTie round={qualifier} trip={trip} onSaved={onSaved} notify={notify} />}
       {trip.rounds.map((r) => (
         <div key={r.id} className="round-admin-row">
           <div>
@@ -125,6 +216,8 @@ function RoundsTab({ trip, onSaved, notify }: TabProps) {
               {roundShort(trip.rounds, r)} · {roundNickname(r)}
             </strong>
             <span className={`status-badge ${r.status}`}>{statusLabel(r.status)}</span>
+            {r.frozen && <span className="status-badge final">frozen</span>}
+            {r.snapshotMissing && <span className="status-badge upcoming">not frozen</span>}
             <div className="muted small">
               {r.dayLabel}
               {r.startedAt ? ` · started ${fmtWhen(r.startedAt)}` : ''}
@@ -206,10 +299,19 @@ function PlayersTab({ trip, onSaved, notify }: TabProps) {
     const raw = edits[playerId];
     const handicapIndex = Number(raw);
     if (raw == null || Number.isNaN(handicapIndex)) return;
-    await api(`/api/admin/players/${playerId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ handicapIndex }),
-    });
+    if (Math.abs(handicapIndex * 10 - Math.round(handicapIndex * 10)) > 1e-6) {
+      notify('⚠️ Indexes have one decimal place, e.g. 11.3');
+      return;
+    }
+    const ok = await attempt(
+      () =>
+        api(`/api/admin/players/${playerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ handicapIndex }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
     notify('Handicap saved');
     onSaved();
   };
@@ -472,18 +574,23 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
   };
 
   const save = async () => {
-    await api('/api/admin/matches', {
-      method: 'PUT',
-      body: JSON.stringify({
-        roundId: round.id,
-        matches: matches.map((m) => ({
-          id: m.id.startsWith('new-') ? undefined : m.id,
-          sideA: m.sideA,
-          sideB: m.sideB,
-          teeTime: m.teeTime,
-        })),
-      }),
-    });
+    const ok = await attempt(
+      () =>
+        api('/api/admin/matches', {
+          method: 'PUT',
+          body: JSON.stringify({
+            roundId: round.id,
+            matches: matches.map((m) => ({
+              id: m.id.startsWith('new-') ? undefined : m.id,
+              sideA: m.sideA,
+              sideB: m.sideB,
+              teeTime: m.teeTime,
+            })),
+          }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
     notify('Matches saved');
     onSaved();
   };
@@ -683,17 +790,22 @@ function CoursesTab({ trip, onSaved, notify }: TabProps) {
   const save = async (courseId: string) => {
     const draft = drafts[courseId];
     if (!draft) return;
-    await api(`/api/admin/courses/${courseId}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        tee: draft.tee,
-        par: draft.par,
-        rating: draft.rating,
-        slope: draft.slope,
-        holes: draft.holes,
-      }),
-    });
-    notify('Course saved');
+    const ok = await attempt(
+      () =>
+        api(`/api/admin/courses/${courseId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            tee: draft.tee,
+            par: draft.par,
+            rating: draft.rating,
+            slope: draft.slope,
+            holes: draft.holes,
+          }),
+        }).then(() => undefined),
+      notify,
+    );
+    if (!ok) return;
+    notify('Course saved (rounds already started keep the card they were started with)');
     onSaved();
   };
 

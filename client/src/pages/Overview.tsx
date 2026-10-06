@@ -225,11 +225,12 @@ export function OverviewPage() {
           </tbody>
         </table>
         <p className="muted small">
-          Columns show playing handicap per round (course handicap × allowance) —{' '}
-          <strong>before</strong> strokes come off the low man, so they are not the strokes you
-          actually receive. Your real strokes show as * marks on the score entry page, which
-          depend on the field in Round 1 and on your match in Rounds 2–5. Indexes get updated
-          right before the trip in Admin.
+          Columns show the playing handicap per round (course handicap × the round’s allowance,
+          rounded once). In Round 1 and Round 3 that is exactly the strokes you receive. In the
+          match-play rounds (2 and 5) strokes depend on who is in your match — the lowest plays
+          off scratch — and in the scramble the team gets a combined handicap. Your real strokes
+          show as * marks on the score entry page. Indexes get updated right before the trip in
+          Admin; once a round is started its settings are frozen.
         </p>
       </section>
     </div>

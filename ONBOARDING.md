@@ -8,7 +8,7 @@
 - **Required before every push, no exceptions:**
   1. `npm install --include=dev` (fresh dependencies, generates the Prisma client)
   2. `npm run build` — must finish with zero errors. This type-checks and compiles both the client and the server; it is the same check CI runs.
-  3. If tests exist by the time you're reading this (`npm test` or a `test` script in any package.json), run them too and they must pass.
+  3. `npm test` — the scoring, handicap, sync and server/phone parity tests must all pass (they live in `server/test/`; CI runs them too). If you change `server/src/services/handicapMath.ts`, copy it over `client/src/handicapMath.ts` as well — a test checks the two files are identical.
   4. If anything fails, fix it and re-run. If you can't get it green, stop and tell Aaron to ask Zack — do not push a red build, ever.
 - After pushing, the CI check on GitHub runs the same build. If it comes back red, treat it as an emergency: fix forward immediately or tell Aaron to ping Zack so he can roll back the deploy.
 - Keep each push small and focused, with a plain-English commit message so Zack can skim the history.

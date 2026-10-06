@@ -2,21 +2,60 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAdmin } from '../middleware/auth';
+import { BUILD_ID } from '../build';
+import { AuthedRequest, requireAdmin } from '../middleware/auth';
 import { asyncHandler, HttpError } from '../middleware/error';
+import { buildSnapshot } from '../services/basis';
+import { SCORING_POLICY_VERSION, toPercent, toTenths } from '../services/handicapMath';
+import { TIE_SETTING_PREFIX } from '../services/leaderboard';
 import { syncMatchClosures } from '../services/matchClosures';
+import { loadDb } from '../store/loadDb';
 import { prisma } from '../store/prisma';
 import { resetAndReseed } from '../store/seed';
+import { ScoringSnapshot } from '../types';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
+
+/** Zod refinements for the precision the handicap maths accepts. */
+const oneDecimal = (what: string) => (v: number) => {
+  try {
+    toTenths(v, what);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const wholePercent = (v: number) => {
+  try {
+    toPercent(v);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Lineups and draws cannot change once a round is final. */
+async function assertRoundEditable(roundId: string) {
+  const round = await prisma.round.findUnique({ where: { id: roundId } });
+  if (!round) throw new HttpError(404, 'Round not found');
+  if (round.status === 'final') {
+    throw new HttpError(409, 'This round is final. Reopen it from Admin → rounds before changing its lineups.');
+  }
+  return round;
+}
 
 // ── Players ────────────────────────────────────────────────────────────────
 
 const PlayerUpdate = z.object({
   name: z.string().min(1).optional(),
   email: z.string().email().nullable().optional(),
-  handicapIndex: z.number().min(-10).max(54).optional(),
+  handicapIndex: z
+    .number()
+    .min(-10)
+    .max(54)
+    .refine(oneDecimal('handicap index'), 'Handicap index must have one decimal place, e.g. 11.3')
+    .optional(),
   isAdmin: z.boolean().optional(),
 });
 
@@ -71,7 +110,12 @@ adminRouter.post(
 const CourseUpdate = z.object({
   tee: z.string().optional(),
   par: z.number().int().min(27).max(74).optional(),
-  rating: z.number().min(25).max(80).optional(),
+  rating: z
+    .number()
+    .min(25)
+    .max(80)
+    .refine(oneDecimal('course rating'), 'Course rating must have one decimal place, e.g. 72.3')
+    .optional(),
   slope: z.number().int().min(55).max(155).optional(),
   notes: z.string().optional(),
   holes: z
@@ -116,7 +160,12 @@ adminRouter.put(
 // ── Rounds ─────────────────────────────────────────────────────────────────
 
 const RoundUpdate = z.object({
-  allowance: z.number().min(0.5).max(1).optional(),
+  allowance: z
+    .number()
+    .min(0.5)
+    .max(1)
+    .refine(wholePercent, 'Allowance must be a whole percentage, e.g. 0.85')
+    .optional(),
   teeTimes: z.array(z.string()).optional(),
 });
 
@@ -150,6 +199,31 @@ adminRouter.put(
     const round = await prisma.round.findUnique({ where: { id: req.params.id } });
     if (!round) throw new HttpError(404, 'Round not found');
     const now = new Date();
+
+    // Starting a round freezes its scoring basis — once. Reopening a finished
+    // round (final → live) keeps the snapshot it was played under. Putting a
+    // round back to "upcoming" always drops the snapshot: "upcoming" means not
+    // started, so a practice run can never freeze test lineups or stale
+    // handicaps into the real round. Scores are kept and simply re-scored
+    // against the fresh snapshot when the round is started again.
+    let snapshot: Prisma.InputJsonValue | typeof Prisma.DbNull | undefined;
+    let snapshotNote: string | undefined;
+    if (status === 'live' && round.scoringSnapshot == null) {
+      const db = await loadDb();
+      const full = db.rounds.find((r) => r.id === round.id)!;
+      snapshot = buildSnapshot(db, full, now.getTime()) as unknown as Prisma.InputJsonValue;
+      snapshotNote = 'scoring basis frozen';
+    } else if (status === 'live') {
+      snapshotNote = 'existing scoring basis kept';
+    } else if (status === 'upcoming' && round.scoringSnapshot != null) {
+      const scoreCount = await prisma.score.count({ where: { roundId: round.id } });
+      snapshot = Prisma.DbNull;
+      snapshotNote =
+        scoreCount === 0
+          ? 'scoring basis cleared'
+          : `scoring basis cleared; ${scoreCount} recorded scores kept and will be re-scored on the next start`;
+    }
+
     await prisma.$transaction(async (tx) => {
       if (status === 'live') {
         await tx.round.updateMany({
@@ -164,10 +238,131 @@ adminRouter.put(
           ...(status === 'live' && { startedAt: round.startedAt ?? now, endedAt: null }),
           ...(status === 'final' && { startedAt: round.startedAt ?? now, endedAt: now }),
           ...(status === 'upcoming' && { startedAt: null, endedAt: null }),
+          ...(snapshot !== undefined && { scoringSnapshot: snapshot }),
         },
       });
     });
-    res.json({ ok: true, rounds: await prisma.round.findMany({ orderBy: { id: 'asc' } }) });
+    res.json({
+      ok: true,
+      snapshot: snapshotNote,
+      rounds: (await prisma.round.findMany({ orderBy: { id: 'asc' } })).map(
+        ({ scoringSnapshot, ...r }) => ({ ...r, frozen: scoringSnapshot != null }),
+      ),
+    });
+  }),
+);
+
+const TieResolutionBody = z.object({
+  /** null clears a previous resolution */
+  pairingId: z.string().nullable(),
+  reason: z.string().max(500).optional().default(''),
+});
+
+/**
+ * Record how a tie for first in the qualifier was resolved (and by whom, and
+ * why). The app does not pick a tie-break itself — see audit — it only shows
+ * the tie and lets an admin record the organizers' decision.
+ */
+adminRouter.put(
+  '/rounds/:id/tie-resolution',
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = TieResolutionBody.parse(req.body);
+    const round = await prisma.round.findUnique({ where: { id: req.params.id } });
+    if (!round) throw new HttpError(404, 'Round not found');
+    const key = `${TIE_SETTING_PREFIX}${round.id}`;
+    if (body.pairingId == null) {
+      await prisma.setting.deleteMany({ where: { key } });
+      res.json({ ok: true, resolution: null });
+      return;
+    }
+    const pairing = await prisma.pairing.findFirst({ where: { id: body.pairingId, roundId: round.id } });
+    if (!pairing) throw new HttpError(404, 'Pairing not found in this round');
+    if (!body.reason.trim()) throw new HttpError(400, 'A reason is required so the decision is on record');
+    const resolution = { pairingId: pairing.id, reason: body.reason.trim(), by: req.user!.id, at: Date.now() };
+    const value = JSON.stringify(resolution);
+    await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+    res.json({ ok: true, resolution });
+  }),
+);
+
+// ── Read-only export for verifying the live configuration ──────────────────
+
+/**
+ * Everything needed to compare the live configuration with the approved
+ * source (seed or printed cards), field by field: courses with every hole,
+ * rounds with status and frozen-basis info, player indexes, lineups and
+ * score counts. No emails, no password state beyond "claimed", no settings
+ * (which hold the lodging codes), no individual scores — this is a
+ * configuration export, not a score backup.
+ */
+adminRouter.get(
+  '/export',
+  asyncHandler(async (_req, res) => {
+    const db = await loadDb();
+    const scoreCounts = new Map<string, { scores: number; pickups: number; lastUpdatedAt: number | null }>();
+    for (const s of db.scores) {
+      const c = scoreCounts.get(s.roundId) ?? { scores: 0, pickups: 0, lastUpdatedAt: null };
+      c.scores += 1;
+      if (s.pickup) c.pickups += 1;
+      c.lastUpdatedAt = Math.max(c.lastUpdatedAt ?? 0, s.updatedAt);
+      scoreCounts.set(s.roundId, c);
+    }
+    res.json({
+      exportedAt: new Date().toISOString(),
+      build: BUILD_ID,
+      policyVersion: SCORING_POLICY_VERSION,
+      kind: 'configuration export (not a score backup)',
+      courses: db.courses,
+      rounds: db.rounds.map((r) => {
+        const snap: ScoringSnapshot | null = r.scoringSnapshot;
+        return {
+          id: r.id,
+          name: r.name,
+          courseId: r.courseId,
+          date: r.date,
+          teeTimes: r.teeTimes,
+          format: r.format,
+          allowance: r.allowance,
+          matchCount: r.matchCount,
+          status: r.status,
+          startedAt: r.startedAt,
+          endedAt: r.endedAt,
+          scoring: scoreCounts.get(r.id) ?? { scores: 0, pickups: 0, lastUpdatedAt: null },
+          frozen: snap != null,
+          snapshot: snap
+            ? {
+                capturedAt: snap.capturedAt,
+                policyVersion: snap.policyVersion,
+                allowance: snap.allowance,
+                course: snap.course,
+                players: snap.players,
+                matches: snap.matches,
+                pairings: snap.pairings,
+                lineupHistory: snap.lineupHistory ?? [],
+              }
+            : null,
+        };
+      }),
+      players: db.users.map((p) => ({
+        id: p.id,
+        name: p.name,
+        handicapIndex: p.handicapIndex,
+        isAdmin: p.isAdmin,
+        claimed: p.passwordHash != null,
+      })),
+      pairings: db.pairings,
+      ryderTeams: db.ryderTeams,
+      matches: db.matches.map((m) => ({
+        id: m.id,
+        roundId: m.roundId,
+        teeTime: m.teeTime,
+        sideA: m.sideA,
+        sideB: m.sideB,
+        result: m.result,
+        closedAt: m.closedAt,
+        resultKey: m.resultKey,
+      })),
+    });
   }),
 );
 
@@ -215,8 +410,7 @@ adminRouter.put(
   '/pairings',
   asyncHandler(async (req, res) => {
     const body = PairingsUpdate.parse(req.body);
-    const round = await prisma.round.findUnique({ where: { id: body.roundId } });
-    if (!round) throw new HttpError(404, 'Round not found');
+    await assertRoundEditable(body.roundId);
     const created = await prisma.$transaction(async (tx) => {
       await tx.pairing.deleteMany({ where: { roundId: body.roundId } });
       await tx.pairing.createMany({
@@ -239,8 +433,7 @@ adminRouter.post(
   '/pairings/randomize',
   asyncHandler(async (req, res) => {
     const roundId = z.object({ roundId: z.string() }).parse(req.body).roundId;
-    const round = await prisma.round.findUnique({ where: { id: roundId } });
-    if (!round) throw new HttpError(404, 'Round not found');
+    const round = await assertRoundEditable(roundId);
     const players = await prisma.player.findMany();
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     const pairings = [];
@@ -315,22 +508,38 @@ adminRouter.put(
   '/matches',
   asyncHandler(async (req, res) => {
     const body = MatchesUpdate.parse(req.body);
-    const round = await prisma.round.findUnique({ where: { id: body.roundId } });
-    if (!round) throw new HttpError(404, 'Round not found');
+    const round = await assertRoundEditable(body.roundId);
     const existing = await prisma.match.findMany({ where: { roundId: body.roundId } });
     const created = await prisma.$transaction(async (tx) => {
       await tx.match.deleteMany({ where: { roundId: body.roundId } });
-      await tx.match.createMany({
-        data: body.matches.map((m) => ({
-          id: m.id ?? randomUUID(),
-          roundId: body.roundId,
-          teeTime: m.teeTime ?? null,
-          sideA: m.sideA,
-          sideB: m.sideB,
-          result: existing.find((e) => e.id === m.id)?.result ?? null,
-          closedAt: existing.find((e) => e.id === m.id)?.closedAt ?? null,
-        })),
-      });
+      const rows = body.matches.map((m) => ({
+        id: m.id ?? randomUUID(),
+        roundId: body.roundId,
+        teeTime: m.teeTime ?? null,
+        sideA: m.sideA,
+        sideB: m.sideB,
+        result: existing.find((e) => e.id === m.id)?.result ?? null,
+        closedAt: existing.find((e) => e.id === m.id)?.closedAt ?? null,
+        resultKey: existing.find((e) => e.id === m.id)?.resultKey ?? null,
+      }));
+      await tx.match.createMany({ data: rows });
+      // A live round is frozen: lineup edits after the start are allowed (a
+      // captain swaps a player) but go on the record inside the snapshot.
+      if (round.status === 'live' && round.scoringSnapshot != null) {
+        const snap = round.scoringSnapshot as unknown as ScoringSnapshot;
+        const history = [
+          ...(snap.lineupHistory ?? []),
+          {
+            at: Date.now(),
+            by: (req as AuthedRequest).user!.id,
+            matches: rows.map((m) => ({ id: m.id, sideA: m.sideA, sideB: m.sideB })),
+          },
+        ];
+        await tx.round.update({
+          where: { id: round.id },
+          data: { scoringSnapshot: { ...snap, lineupHistory: history } as unknown as Prisma.InputJsonValue },
+        });
+      }
       return tx.match.findMany({ where: { roundId: body.roundId } });
     });
     res.json({ ok: true, matches: created });

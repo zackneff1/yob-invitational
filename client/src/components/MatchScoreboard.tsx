@@ -4,6 +4,9 @@
  * how the match stands — "2 UP", "AS", "3&2", "HALVED" — with "thru 12" or
  * "Final" under it. Points earned appear on the winning side once it's over.
  *
+ * A reading that still has a ball missing somewhere is drawn as provisional
+ * (dashed pill, "pending" / "(prov.)" under it) and never shows points.
+ *
  * Used by the Leaderboard and Cup pages (fed from the server) and by the score
  * page (fed from the scores on the phone), so the match reads the same
  * everywhere.
@@ -28,6 +31,7 @@ export function MatchScoreboard({ state, sideA, sideB, teeTime, compact }: Props
   const pillColor =
     readout.tone === 'A' ? sideA.color : readout.tone === 'B' ? sideB.color : undefined;
 
+  // Points are confirmed only: never from a provisional reading.
   const pointsFor = (which: 'A' | 'B'): number | null => {
     if (!state.final) return null;
     if (state.leader == null) return 0.5;
@@ -72,13 +76,16 @@ export function MatchScoreboard({ state, sideA, sideB, teeTime, compact }: Props
       {renderSide(sideA, 'A')}
       <div className="rc-center">
         <span
-          className={`rc-pill ${pillColor ? '' : 'neutral'}`}
+          className={`rc-pill ${pillColor ? '' : 'neutral'} ${readout.provisional ? 'pending' : ''}`}
           style={pillColor ? { background: pillColor } : undefined}
+          title={readout.provisional ? 'Provisional — a score is still missing' : undefined}
         >
           {readout.big}
         </span>
         <span className="rc-sub">{readout.sub}</span>
-        {state.thru === 0 && !state.final && teeTime && <span className="rc-sub">{teeTime}</span>}
+        {state.thru === 0 && !state.final && (state.provisional?.thru ?? 0) === 0 && teeTime && (
+          <span className="rc-sub">{teeTime}</span>
+        )}
       </div>
       {renderSide(sideB, 'B')}
     </div>

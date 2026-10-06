@@ -10,7 +10,7 @@ export function seedCourses(): Course[] {
 
 export function seedRounds(): Round[] {
   // Every round starts out 'upcoming'; admins start and end them from Admin → Rounds.
-  const fresh = { status: 'upcoming' as const, startedAt: null, endedAt: null };
+  const fresh = { status: 'upcoming' as const, startedAt: null, endedAt: null, scoringSnapshot: null };
   return [
     {
       id: 'r1-conestoga',
@@ -129,7 +129,11 @@ async function insertSeedData(tx: Prisma.TransactionClient): Promise<void> {
     })),
   });
   await tx.round.createMany({
-    data: seedRounds().map((r) => ({ ...r, startedAt: null, endedAt: null })),
+    data: seedRounds().map(({ scoringSnapshot: _snapshot, ...r }) => ({
+      ...r,
+      startedAt: null,
+      endedAt: null,
+    })),
   });
   await tx.ryderTeam.createMany({
     data: [

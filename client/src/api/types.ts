@@ -1,4 +1,5 @@
 // Mirrors of the server's API payload shapes.
+import type { PolicyVersion, Rational } from '../handicapMath';
 
 export interface PublicPlayer {
   id: string;
@@ -34,6 +35,16 @@ export type RoundFormat = 'bestball-qualifier' | 'fourball' | 'stableford' | 'sc
 /** Admins move rounds upcoming → live → final; only one round is live at a time. */
 export type RoundStatus = 'upcoming' | 'live' | 'final';
 
+export interface RoundHandicap {
+  playerId: string;
+  /** Index the round is scored with (frozen once the round has started). */
+  handicapIndex?: number;
+  /** Exact unrounded Course Handicap; the phone derives match strokes from it. */
+  courseHandicapRaw?: Rational;
+  courseHandicap: number;
+  playingHandicap: number;
+}
+
 export interface Round {
   id: string;
   name: string;
@@ -44,14 +55,23 @@ export interface Round {
   format: RoundFormat;
   formatLabel: string;
   allowance: number;
-  /** Unused — strokes always come off the low man; see the server's Round type. */
+  /** Unused — the format decides the stroke rule; see handicapMath.groupStrokes. */
   playOffLow: boolean;
   matchCount: number;
   description: string;
   status: RoundStatus;
   startedAt: number | null;
   endedAt: number | null;
-  courseHandicaps: { playerId: string; courseHandicap: number; playingHandicap: number }[];
+  /** The card the round is scored on: the frozen copy once started, else the live course. */
+  scoringCourse?: Course;
+  policyVersion?: PolicyVersion;
+  /** Scoring basis is frozen in a snapshot. */
+  frozen?: boolean;
+  /** Started/finished before snapshots existed — scored from live settings. */
+  snapshotMissing?: boolean;
+  snapshotCapturedAt?: number | null;
+  lineupHistory?: { at: number; by: string; matches: { id: string; sideA: string[]; sideB: string[] }[] }[];
+  courseHandicaps: RoundHandicap[];
 }
 
 export interface Pairing {
@@ -78,9 +98,15 @@ export interface Match {
   sideB: string[];
   result: 'A' | 'B' | 'HALVED' | null;
   closedAt: number | null;
+  resultKey?: string | null;
 }
 
 export interface Trip {
+  /** Server build identifier (non-secret), for verifying the deployed version. */
+  build?: string;
+  /** Oldest client generation the server treats as current. */
+  minClientVersion?: number;
+  policyVersion?: PolicyVersion;
   players: PublicPlayer[];
   courses: Course[];
   rounds: Round[];
@@ -96,7 +122,10 @@ export interface Score {
   entityType: 'player' | 'side';
   entityId: string;
   hole: number;
-  strokes: number;
+  /** Gross strokes; null for a pickup. */
+  strokes: number | null;
+  /** Explicit pickup / no return. */
+  pickup?: boolean;
   updatedAt: number;
   updatedBy: string;
 }
@@ -105,6 +134,7 @@ export interface PlayerHandicapInfo {
   playerId: string;
   name: string;
   handicapIndex: number;
+  courseHandicapRaw?: Rational;
   courseHandicap: number;
   playingHandicap: number;
   effectiveHandicap: number;
@@ -118,7 +148,28 @@ export interface QualifierRow {
   thru: number;
   net: number;
   toPar: number;
-  position: number;
+  /** Shared position; null for a team with no return. */
+  position: number | null;
+  tied: boolean;
+  noReturn: boolean;
+  complete: boolean;
+}
+
+export interface TieResolution {
+  pairingId: string;
+  reason: string;
+  by: string;
+  at: number;
+}
+
+export interface MatchReading {
+  thru: number;
+  leader: 'A' | 'B' | null;
+  margin: number;
+  decided: boolean;
+  closeoutRemaining: number;
+  complete: boolean;
+  totals?: { A: number; B: number; unit: string };
 }
 
 export interface ComputedMatch {
@@ -128,25 +179,42 @@ export interface ComputedMatch {
   teeTime: string | null;
   sideA: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   sideB: { teamName: string; color: string; players: PlayerHandicapInfo[] };
-  thru: number;
   holeCount: number;
+  /** Confirmed reading (fully resolved holes only). */
+  thru: number;
   leader: 'A' | 'B' | null;
   margin: number;
   decided: boolean;
   final: boolean;
   closeoutRemaining: number;
+  /** Everything that has arrived, including holes with a partner's score missing. */
+  provisional?: MatchReading;
+  unresolvedHoles?: number[];
+  missing?: { entityId: string; name: string; holes: number[] }[];
   overridden: boolean;
   closedAt: number | null;
+  resultKey?: string | null;
   statusText: string;
   points: { A: number; B: number };
   provisionalPoints: { A: number; B: number };
   detail?: { totalA: number; totalB: number; unit: string };
   /** Scramble only: strokes each side receives (team handicap, off the lower side). */
   sideStrokes?: { A: number; B: number };
+  policyVersion?: PolicyVersion;
+  frozen?: boolean;
+  snapshotMissing?: boolean;
 }
 
 export type RoundLeaderboard =
-  | { type: 'qualifier'; round: Round; rows: QualifierRow[] }
+  | {
+      type: 'qualifier';
+      round: Round;
+      rows: QualifierRow[];
+      tieForFirst?: { pairingIds: string[]; resolution: TieResolution | null } | null;
+      policyVersion?: PolicyVersion;
+      frozen?: boolean;
+      snapshotMissing?: boolean;
+    }
   | { type: 'matches'; round: Round; matches: ComputedMatch[] };
 
 export interface RyderBoard {
@@ -161,6 +229,10 @@ export interface RyderBoard {
   }[];
   totalPoints: number;
   pointsToWin: number;
+  matchesTotal?: number;
+  matchesFinal?: number;
+  /** 'A' | 'B' once won; 'TIE' when every match is final and level; else 'in-progress'. */
+  outcome?: 'in-progress' | 'A' | 'B' | 'TIE';
   rounds: {
     roundId: string;
     roundName: string;

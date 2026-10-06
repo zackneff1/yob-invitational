@@ -1,12 +1,14 @@
-import { DB, Match, MatchResult, Round } from '../types';
+import { DB, Match, MatchResult, Pairing, Player, Round } from '../types';
+import { ScoringBasis, scoringBasis } from './basis';
+import { PolicyVersion } from './handicapMath';
 import {
+  GrossValue,
+  PlayerHandicapInfo,
   buildScoreMap,
   grossFor,
   handicapInfoFor,
   netFor,
-  PlayerHandicapInfo,
-  ScoreMap,
-  scrambleTeamHandicap,
+  scrambleSidesFor,
   stablefordPoints,
   strokesOnHole,
 } from './scoring';
@@ -18,72 +20,146 @@ export interface QualifierRow {
   name: string;
   teeTime: string | null;
   players: PlayerHandicapInfo[];
+  /** Holes with a counting team score. */
   thru: number;
   net: number;
   toPar: number;
-  position: number;
+  /** Shared ("T") positions; null for a team with no return. */
+  position: number | null;
+  tied: boolean;
+  /** Both partners picked up on a hole: the team has no score for the round. */
+  noReturn: boolean;
+  /** Every hole has a counting team score. */
+  complete: boolean;
 }
 
-export function qualifierLeaderboard(db: DB, round: Round): QualifierRow[] {
-  const course = db.courses.find((c) => c.id === round.courseId)!;
+export interface TieResolution {
+  pairingId: string;
+  reason: string;
+  by: string;
+  at: number;
+}
+
+export interface QualifierBoard {
+  rows: QualifierRow[];
+  /** A tie for first among completed teams needs a decision before captains are named. */
+  tieForFirst: { pairingIds: string[]; resolution: TieResolution | null } | null;
+  policyVersion: PolicyVersion;
+  frozen: boolean;
+  snapshotMissing: boolean;
+}
+
+export const TIE_SETTING_PREFIX = 'tie.';
+
+export function qualifierLeaderboard(db: DB, round: Round): QualifierBoard {
+  const basis = scoringBasis(db, round);
+  const course = basis.course;
   const map = buildScoreMap(db.scores, round.id);
   const n = course.holes.length;
 
   const pairings = db.pairings.filter((p) => p.roundId === round.id);
+  const playerOf = (id: string) => basis.players.find((u) => u.id === id);
 
-  // Strokes come off the low man across the WHOLE field, not each pair: every
-  // player in the qualifier is reduced by the lowest playing handicap among all
-  // twelve, so the low man plays off scratch and everyone else gets the
-  // difference. Computed once here and shared by every pairing below.
+  // The whole field is one handicap group: under policy 2 everyone plays the
+  // full Playing Handicap (stroke play); under policy 1 strokes came off the
+  // field's low man.
   const fieldPlayers = [...new Set(pairings.flatMap((p) => p.playerIds))]
-    .map((id) => db.users.find((u) => u.id === id))
-    .filter((p): p is NonNullable<typeof p> => Boolean(p));
-  const fieldInfos = handicapInfoFor(fieldPlayers, round, course);
+    .map(playerOf)
+    .filter((p): p is Player => Boolean(p));
+  const fieldInfos = handicapInfoFor(fieldPlayers, round.format, basis.allowance, course, basis.policy);
   const infoFor = new Map(fieldInfos.map((i) => [i.playerId, i]));
 
-  const rows = pairings
-    .map((pairing) => {
-      const players = pairing.playerIds
-        .map((id) => db.users.find((u) => u.id === id))
-        .filter((p): p is NonNullable<typeof p> => Boolean(p));
-      const infos = players
-        .map((p) => infoFor.get(p.id))
-        .filter((i): i is NonNullable<typeof i> => Boolean(i));
-      let net = 0;
-      let par = 0;
-      let thru = 0;
-      for (const hole of course.holes) {
-        const nets = infos
-          .map((info) => netFor(map, info, hole, n))
-          .filter((v): v is number => v != null);
-        if (!nets.length) continue;
+  const rows: QualifierRow[] = pairings.map((pairing: Pairing) => {
+    const players = pairing.playerIds.map(playerOf).filter((p): p is Player => Boolean(p));
+    const infos = players.map((p) => infoFor.get(p.id)).filter((i): i is PlayerHandicapInfo => Boolean(i));
+    let net = 0;
+    let par = 0;
+    let thru = 0;
+    let noReturn = false;
+    for (const hole of course.holes) {
+      const values = infos.map((info) => netFor(map, info, hole, n));
+      const numeric = values.filter((v): v is number => typeof v === 'number');
+      if (numeric.length) {
         thru += 1;
         par += hole.par;
-        net += Math.min(...nets);
+        net += Math.min(...numeric);
+      } else if (values.length && values.every((v) => v === 'pickup')) {
+        // Every partner picked up: no team score exists for this hole.
+        noReturn = true;
       }
-      return {
-        pairingId: pairing.id,
-        name: pairing.name || players.map((p) => p.name).join(' / '),
-        teeTime: pairing.teeTime,
-        players: infos,
-        thru,
-        net,
-        toPar: net - par,
-        position: 0,
-      };
-    });
+    }
+    return {
+      pairingId: pairing.id,
+      name: pairing.name || players.map((p) => p.name).join(' / '),
+      teeTime: pairing.teeTime,
+      players: infos,
+      thru,
+      net,
+      toPar: net - par,
+      position: null,
+      tied: false,
+      noReturn,
+      complete: !noReturn && thru === n,
+    };
+  });
 
   rows.sort((a, b) => {
+    if (a.noReturn !== b.noReturn) return a.noReturn ? 1 : -1;
     if (a.thru === 0 && b.thru === 0) return 0;
     if (a.thru === 0) return 1;
     if (b.thru === 0) return -1;
     return a.toPar - b.toPar || b.thru - a.thru;
   });
-  rows.forEach((r, i) => (r.position = i + 1));
-  return rows;
+  // Standard competition ranking: equal to-par and holes played share a position.
+  const ranked = rows.filter((r) => !r.noReturn && r.thru > 0);
+  ranked.forEach((r, i) => {
+    const same = ranked.filter((o) => o.toPar === r.toPar && o.thru === r.thru);
+    r.position = ranked.findIndex((o) => o.toPar === r.toPar && o.thru === r.thru) + 1;
+    r.tied = same.length > 1;
+    void i;
+  });
+
+  const completedLeaders = ranked.filter((r) => r.position === 1 && r.complete);
+  let tieForFirst: QualifierBoard['tieForFirst'] = null;
+  if (completedLeaders.length > 1 && ranked.every((r) => r.complete || r.toPar > completedLeaders[0].toPar)) {
+    const raw = db.settings[`${TIE_SETTING_PREFIX}${round.id}`];
+    let resolution: TieResolution | null = null;
+    if (raw) {
+      try {
+        resolution = JSON.parse(raw) as TieResolution;
+      } catch {
+        resolution = null;
+      }
+    }
+    tieForFirst = { pairingIds: completedLeaders.map((r) => r.pairingId), resolution };
+  }
+
+  return {
+    rows,
+    tieForFirst,
+    policyVersion: basis.policy,
+    frozen: basis.frozen,
+    snapshotMissing: basis.snapshotMissing,
+  };
 }
 
 // ── Ryder Cup matches ──────────────────────────────────────────────────────
+
+export interface MatchReading {
+  /** Holes counted. */
+  thru: number;
+  /** Which side leads (null = all square / tied / nothing yet). */
+  leader: 'A' | 'B' | null;
+  margin: number;
+  /** Match play: the lead exceeds the holes left. */
+  decided: boolean;
+  /** Match play: holes left when closed out early. */
+  closeoutRemaining: number;
+  /** Decided, or every hole counted. */
+  complete: boolean;
+  /** Stableford points / scramble net, when the format has totals. */
+  totals?: { A: number; B: number; unit: string };
+}
 
 export interface ComputedMatch {
   id: string;
@@ -92,26 +168,39 @@ export interface ComputedMatch {
   teeTime: string | null;
   sideA: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   sideB: { teamName: string; color: string; players: PlayerHandicapInfo[] };
-  thru: number;
-  /** Holes on the course, so clients can render "thru 12 of 18". */
   holeCount: number;
-  /** Which side leads right now (null = all square / no scores). */
+  /** Confirmed reading — only holes where every ball is resolved (score or pickup). */
+  thru: number;
   leader: 'A' | 'B' | null;
   margin: number;
   decided: boolean;
   final: boolean;
-  /** Holes left when a match-play match was closed out early (the "2" in 3&2). */
   closeoutRemaining: number;
+  /**
+   * Provisional reading — every ball that has arrived, including holes where a
+   * partner's score is still missing. Never produces a final result or a point.
+   */
+  provisional: MatchReading;
+  /** Holes inside the provisional reading that are not yet fully resolved. */
+  unresolvedHoles: number[];
+  /** Players (or sides) with a missing score inside the provisional reading. */
+  missing: { entityId: string; name: string; holes: number[] }[];
   overridden: boolean;
-  /** Epoch ms the match was first seen final, or null while still going. */
+  /** Epoch ms the current final result was established, or null. */
   closedAt: number | null;
+  /** Identity of the final result ("A:3&2", "HALVED", "B:24-21", "OVR:A"); null until final. */
+  resultKey: string | null;
   statusText: string;
+  /** Confirmed points only. */
   points: { A: number; B: number };
-  /** Points if every unfinished match ended right now. */
+  /** Points if every match ended as it provisionally stands. */
   provisionalPoints: { A: number; B: number };
   detail?: { totalA: number; totalB: number; unit: string };
   /** Scramble only: strokes each side receives (team handicap, off the lower side). */
   sideStrokes?: { A: number; B: number };
+  policyVersion: PolicyVersion;
+  frozen: boolean;
+  snapshotMissing: boolean;
 }
 
 function resultToPoints(result: Exclude<MatchResult, null>): { A: number; B: number } {
@@ -120,141 +209,226 @@ function resultToPoints(result: Exclude<MatchResult, null>): { A: number; B: num
   return { A: 0.5, B: 0.5 };
 }
 
+type SideValues = GrossValue[];
+
+/** Outcome of one hole from the balls present: +1 A, −1 B, 0 halved, null undecidable. */
+function holeOutcome(a: SideValues, b: SideValues): 1 | -1 | 0 | null {
+  const numA = a.filter((v): v is number => typeof v === 'number');
+  const numB = b.filter((v): v is number => typeof v === 'number');
+  const presentA = a.some((v) => v != null);
+  const presentB = b.some((v) => v != null);
+  if (!presentA || !presentB) return null;
+  if (numA.length && numB.length) {
+    const bestA = Math.min(...numA);
+    const bestB = Math.min(...numB);
+    return bestA < bestB ? 1 : bestB < bestA ? -1 : 0;
+  }
+  // One side has only pickups: the other side wins the hole with any score.
+  if (numA.length && !numB.length) return 1;
+  if (numB.length && !numA.length) return -1;
+  // Both sides picked up every ball: halved.
+  return 0;
+}
+
 export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch {
-  const course = db.courses.find((c) => c.id === round.courseId)!;
+  const basis: ScoringBasis = scoringBasis(db, round);
+  const course = basis.course;
   const map = buildScoreMap(db.scores, round.id);
   const n = course.holes.length;
 
   const playersOf = (ids: string[]) =>
-    ids.map((id) => db.users.find((u) => u.id === id)).filter((p): p is NonNullable<typeof p> => Boolean(p));
+    ids.map((id) => basis.players.find((u) => u.id === id)).filter((p): p is Player => Boolean(p));
   const playersA = playersOf(match.sideA);
   const playersB = playersOf(match.sideB);
 
   const teamA = db.ryderTeams.find((t) => t.id === 'A')!;
   const teamB = db.ryderTeams.find((t) => t.id === 'B')!;
 
-  // Handicaps: for play-off-low formats the reduction is computed across the
-  // whole match (all players in it), not per side.
-  const allInfos = handicapInfoFor([...playersA, ...playersB], round, course);
+  // Strokes are worked out across the whole match (all players in it).
+  const allInfos = handicapInfoFor([...playersA, ...playersB], round.format, basis.allowance, course, basis.policy);
   const infosA = allInfos.slice(0, playersA.length);
   const infosB = allInfos.slice(playersA.length);
 
-  let thru = 0;
-  let leader: 'A' | 'B' | null = null;
-  let margin = 0;
-  let decided = false;
-  let final = false;
-  let closeoutRemaining = 0;
-  let statusText = 'Not started';
+  const confirmed: MatchReading = { thru: 0, leader: null, margin: 0, decided: false, closeoutRemaining: 0, complete: false };
+  const provisional: MatchReading = { thru: 0, leader: null, margin: 0, decided: false, closeoutRemaining: 0, complete: false };
+  const unresolvedHoles: number[] = [];
+  const missingMap = new Map<string, { name: string; holes: number[] }>();
   let detail: ComputedMatch['detail'];
   let sideStrokes: ComputedMatch['sideStrokes'];
+  let statusText = 'Not started';
+
+  const noteMissing = (entityId: string, name: string, hole: number) => {
+    const m = missingMap.get(entityId) ?? { name, holes: [] };
+    m.holes.push(hole);
+    missingMap.set(entityId, m);
+  };
 
   if (round.format === 'fourball' || round.format === 'singles') {
-    // Hole-by-hole match play on best net ball. Holes are processed in order
-    // and we stop at the first hole either side hasn't scored.
-    let diff = 0; // positive = A up
+    // Two passes over the same holes: confirmed stops at the first hole with
+    // any ball missing; provisional continues while each side has at least one.
+    let diffC = 0;
+    let diffP = 0;
+    let confirmedOpen = true;
     for (const hole of course.holes) {
-      const netsA = infosA.map((i) => netFor(map, i, hole, n)).filter((v): v is number => v != null);
-      const netsB = infosB.map((i) => netFor(map, i, hole, n)).filter((v): v is number => v != null);
-      if (!netsA.length || !netsB.length) break;
-      const bestA = Math.min(...netsA);
-      const bestB = Math.min(...netsB);
-      if (bestA < bestB) diff += 1;
-      else if (bestB < bestA) diff -= 1;
-      thru += 1;
-      const remaining = n - thru;
-      if (Math.abs(diff) > remaining) {
-        decided = true;
-        closeoutRemaining = remaining;
-        break;
+      const valsA = infosA.map((i) => netFor(map, i, hole, n));
+      const valsB = infosB.map((i) => netFor(map, i, hole, n));
+      const resolved = [...valsA, ...valsB].every((v) => v != null);
+      const outcome = holeOutcome(valsA, valsB);
+      if (outcome == null) break; // a whole side is missing: nothing further can be read
+      if (!resolved) {
+        unresolvedHoles.push(hole.number);
+        infosA.forEach((i, k) => valsA[k] == null && noteMissing(i.playerId, i.name, hole.number));
+        infosB.forEach((i, k) => valsB[k] == null && noteMissing(i.playerId, i.name, hole.number));
       }
+      // provisional
+      if (!provisional.decided) {
+        diffP += outcome;
+        provisional.thru += 1;
+        if (Math.abs(diffP) > n - provisional.thru) {
+          provisional.decided = true;
+          provisional.closeoutRemaining = n - provisional.thru;
+        }
+      }
+      // confirmed
+      if (confirmedOpen && resolved && !confirmed.decided) {
+        diffC += outcome;
+        confirmed.thru += 1;
+        if (Math.abs(diffC) > n - confirmed.thru) {
+          confirmed.decided = true;
+          confirmed.closeoutRemaining = n - confirmed.thru;
+        }
+      } else if (!resolved) {
+        confirmedOpen = false; // an unresolved hole blocks everything after it
+      }
+      if (provisional.decided && (confirmed.decided || !confirmedOpen)) break;
     }
-    margin = Math.abs(diff);
-    leader = diff > 0 ? 'A' : diff < 0 ? 'B' : null;
-    final = decided || thru === n;
-    if (thru === 0) statusText = 'Not started';
-    else if (final) {
-      if (!leader) statusText = 'Halved';
-      else {
-        const winnerName = leader === 'A' ? teamA.name : teamB.name;
-        statusText =
-          closeoutRemaining > 0 ? `${winnerName} wins ${margin}&${closeoutRemaining}` : `${winnerName} wins ${margin} UP`;
-      }
-    } else if (!leader) statusText = `All square thru ${thru}`;
-    else statusText = `${leader === 'A' ? teamA.name : teamB.name} ${margin} UP thru ${thru}`;
+    confirmed.margin = Math.abs(diffC);
+    confirmed.leader = diffC > 0 ? 'A' : diffC < 0 ? 'B' : null;
+    confirmed.complete = confirmed.decided || confirmed.thru === n;
+    provisional.margin = Math.abs(diffP);
+    provisional.leader = diffP > 0 ? 'A' : diffP < 0 ? 'B' : null;
+    provisional.complete = provisional.decided || provisional.thru === n;
   } else if (round.format === 'stableford') {
-    // Two-man aggregate Stableford: a hole counts once all four players have scored it.
-    let ptsA = 0;
-    let ptsB = 0;
+    let cA = 0, cB = 0, pA = 0, pB = 0;
+    let resolvedHoles = 0;
+    let anyHole = 0;
     for (const hole of course.holes) {
-      const netsA = infosA.map((i) => netFor(map, i, hole, n));
-      const netsB = infosB.map((i) => netFor(map, i, hole, n));
-      if ([...netsA, ...netsB].some((v) => v == null)) continue;
-      thru += 1;
-      ptsA += (netsA as number[]).reduce((sum, v) => sum + stablefordPoints(v, hole.par), 0);
-      ptsB += (netsB as number[]).reduce((sum, v) => sum + stablefordPoints(v, hole.par), 0);
+      const valsA = infosA.map((i) => netFor(map, i, hole, n));
+      const valsB = infosB.map((i) => netFor(map, i, hole, n));
+      const all = [...valsA, ...valsB];
+      if (all.every((v) => v == null)) continue;
+      anyHole += 1;
+      const pts = (vals: GrossValue[]) =>
+        vals.reduce<number>((s, v) => s + (typeof v === 'number' ? stablefordPoints(v, hole.par) : 0), 0);
+      pA += pts(valsA);
+      pB += pts(valsB);
+      if (all.every((v) => v != null)) {
+        resolvedHoles += 1;
+        cA += pts(valsA);
+        cB += pts(valsB);
+      } else {
+        unresolvedHoles.push(hole.number);
+        infosA.forEach((i, k) => valsA[k] == null && noteMissing(i.playerId, i.name, hole.number));
+        infosB.forEach((i, k) => valsB[k] == null && noteMissing(i.playerId, i.name, hole.number));
+      }
     }
-    margin = Math.abs(ptsA - ptsB);
-    leader = ptsA > ptsB ? 'A' : ptsB > ptsA ? 'B' : null;
-    final = thru === n;
-    decided = final;
-    detail = { totalA: ptsA, totalB: ptsB, unit: 'pts' };
-    if (thru === 0) statusText = 'Not started';
-    else if (final)
-      statusText = leader
-        ? `${leader === 'A' ? teamA.name : teamB.name} wins ${ptsA}–${ptsB}`
-        : `Halved ${ptsA}–${ptsB}`;
-    else statusText = `${ptsA}–${ptsB} thru ${thru}`;
+    confirmed.thru = resolvedHoles;
+    confirmed.totals = { A: cA, B: cB, unit: 'pts' };
+    confirmed.margin = Math.abs(cA - cB);
+    confirmed.leader = cA > cB ? 'A' : cB > cA ? 'B' : null;
+    confirmed.complete = resolvedHoles === n;
+    confirmed.decided = confirmed.complete;
+    provisional.thru = anyHole;
+    provisional.totals = { A: pA, B: pB, unit: 'pts' };
+    provisional.margin = Math.abs(pA - pB);
+    provisional.leader = pA > pB ? 'A' : pB > pA ? 'B' : null;
+    provisional.complete = resolvedHoles === n;
+    detail = confirmed.complete ? { totalA: cA, totalB: cB, unit: 'pts' } : { totalA: pA, totalB: pB, unit: 'pts' };
   } else if (round.format === 'scramble') {
-    // Head-to-head net scramble. One gross score per side per hole; the
-    // higher-handicap side gets the difference in team handicaps, allocated by SI.
-    const phA = scrambleTeamHandicap(playersA, course);
-    const phB = scrambleTeamHandicap(playersB, course);
-    const low = Math.min(phA, phB);
-    const effA = phA - low;
-    const effB = phB - low;
-    sideStrokes = { A: effA, B: effB };
-    let netA = 0;
-    let netB = 0;
+    const sides = scrambleSidesFor([playersA, playersB], course, basis.policy);
+    sideStrokes = { A: sides.strokes[0], B: sides.strokes[1] };
+    let netA = 0, netB = 0;
     for (const hole of course.holes) {
       const grossA = grossFor(map, 'side', `${match.id}:A`, hole.number);
       const grossB = grossFor(map, 'side', `${match.id}:B`, hole.number);
-      if (grossA == null || grossB == null) continue;
-      thru += 1;
-      netA += grossA - strokesOnHole(effA, hole.strokeIndex, n);
-      netB += grossB - strokesOnHole(effB, hole.strokeIndex, n);
+      // Sides must return a number; a pickup row for a side is treated as missing.
+      if (typeof grossA !== 'number' || typeof grossB !== 'number') {
+        if (grossA == null && grossB != null) noteMissing(`${match.id}:A`, teamA.name, hole.number);
+        if (grossB == null && grossA != null) noteMissing(`${match.id}:B`, teamB.name, hole.number);
+        continue;
+      }
+      confirmed.thru += 1;
+      netA += grossA - strokesOnHole(sideStrokes.A, hole.strokeIndex, n);
+      netB += grossB - strokesOnHole(sideStrokes.B, hole.strokeIndex, n);
     }
-    margin = Math.abs(netA - netB);
-    leader = netA < netB ? 'A' : netB < netA ? 'B' : null;
-    final = thru === n;
-    decided = final;
+    confirmed.totals = { A: netA, B: netB, unit: 'net' };
+    confirmed.margin = Math.abs(netA - netB);
+    confirmed.leader = netA < netB ? 'A' : netB < netA ? 'B' : null;
+    confirmed.complete = confirmed.thru === n;
+    confirmed.decided = confirmed.complete;
+    Object.assign(provisional, confirmed);
     detail = { totalA: netA, totalB: netB, unit: 'net' };
-    if (thru === 0) statusText = 'Not started';
-    else if (final)
-      statusText = leader
-        ? `${leader === 'A' ? teamA.name : teamB.name} wins by ${margin}`
-        : `Halved at ${netA}`;
-    else
-      statusText = leader
-        ? `${leader === 'A' ? teamA.name : teamB.name} by ${margin} thru ${thru}`
-        : `Tied thru ${thru}`;
   }
 
-  // Points: admin override wins; otherwise use the computed result once final.
+  // ── Final result, points, identity ──
+  let final = confirmed.complete && confirmed.thru > 0;
+  const overridden = match.result != null;
   let points = { A: 0, B: 0 };
   let provisionalPoints = { A: 0, B: 0 };
-  const overridden = match.result != null;
+  let resultKey: string | null = null;
+  const isMatchPlay = round.format === 'fourball' || round.format === 'singles';
+  const nameOf = (s: 'A' | 'B' | null) => (s === 'A' ? teamA.name : s === 'B' ? teamB.name : null);
+
+  const describe = (r: MatchReading): string => {
+    if (isMatchPlay) {
+      if (r.complete) {
+        if (!r.leader) return 'Halved';
+        return r.closeoutRemaining > 0
+          ? `${nameOf(r.leader)} wins ${r.margin}&${r.closeoutRemaining}`
+          : `${nameOf(r.leader)} wins ${r.margin} UP`;
+      }
+      return r.leader ? `${nameOf(r.leader)} ${r.margin} UP thru ${r.thru}` : `All square thru ${r.thru}`;
+    }
+    const t = r.totals ?? { A: 0, B: 0, unit: '' };
+    if (r.complete) {
+      return r.leader ? `${nameOf(r.leader)} wins ${t.A}–${t.B}` : `Halved ${t.A}–${t.B}`;
+    }
+    return r.leader
+      ? `${nameOf(r.leader)} by ${r.margin} (${t.A}–${t.B}) thru ${r.thru}`
+      : `Tied ${t.A}–${t.B} thru ${r.thru}`;
+  };
+
   if (overridden) {
     points = resultToPoints(match.result!);
     provisionalPoints = points;
     final = true;
-    statusText = `${statusText} (admin: ${match.result === 'HALVED' ? 'halved' : `${match.result === 'A' ? teamA.name : teamB.name} wins`})`;
-  } else if (final && thru > 0) {
-    const result: Exclude<MatchResult, null> = leader ?? 'HALVED';
+    resultKey = `OVR:${match.result}`;
+    statusText = `${describe(provisional)} (admin: ${match.result === 'HALVED' ? 'halved' : `${nameOf(match.result)} wins`})`;
+    // The override is the result: make the confirmed reading say so.
+    confirmed.leader = match.result === 'HALVED' ? null : match.result;
+    confirmed.complete = true;
+  } else if (final) {
+    const result: Exclude<MatchResult, null> = confirmed.leader ?? 'HALVED';
     points = resultToPoints(result);
     provisionalPoints = points;
-  } else if (thru > 0) {
-    provisionalPoints = leader ? resultToPoints(leader) : { A: 0.5, B: 0.5 };
+    const t = confirmed.totals;
+    resultKey = isMatchPlay
+      ? confirmed.leader
+        ? `${confirmed.leader}:${confirmed.closeoutRemaining > 0 ? `${confirmed.margin}&${confirmed.closeoutRemaining}` : `${confirmed.margin}UP`}`
+        : 'HALVED'
+      : `${confirmed.leader ?? 'H'}:${t?.A ?? 0}-${t?.B ?? 0}`;
+    statusText = describe(confirmed);
+  } else {
+    if (provisional.thru > 0) {
+      provisionalPoints = provisional.leader ? resultToPoints(provisional.leader) : { A: 0.5, B: 0.5 };
+      statusText = describe(provisional);
+      if (unresolvedHoles.length) {
+        statusText += provisional.complete ? ' — pending' : ' (prov.)';
+        statusText += ` · ${unresolvedHoles.length} hole${unresolvedHoles.length > 1 ? 's' : ''} awaiting scores`;
+      }
+    } else {
+      statusText = 'Not started';
+    }
   }
 
   return {
@@ -264,20 +438,27 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
     teeTime: match.teeTime,
     sideA: { teamName: teamA.name, color: teamA.color, players: infosA },
     sideB: { teamName: teamB.name, color: teamB.color, players: infosB },
-    thru,
     holeCount: n,
-    leader,
-    margin,
-    decided,
+    thru: confirmed.thru,
+    leader: confirmed.leader,
+    margin: confirmed.margin,
+    decided: confirmed.decided,
     final,
-    closeoutRemaining,
+    closeoutRemaining: confirmed.closeoutRemaining,
+    provisional,
+    unresolvedHoles,
+    missing: [...missingMap.entries()].map(([entityId, m]) => ({ entityId, name: m.name, holes: m.holes })),
     overridden,
     closedAt: match.closedAt,
+    resultKey,
     statusText,
     points,
     provisionalPoints,
     detail,
     sideStrokes,
+    policyVersion: basis.policy,
+    frozen: basis.frozen,
+    snapshotMissing: basis.snapshotMissing,
   };
 }
 
@@ -293,6 +474,15 @@ export interface RyderBoard {
   }[];
   totalPoints: number;
   pointsToWin: number;
+  matchesTotal: number;
+  matchesFinal: number;
+  /**
+   * 'A' / 'B' once a side has reached the winning total; 'TIE' when every
+   * match is final and the points are level (a completed tie — what happens
+   * next is an organizer decision, not something the app invents); otherwise
+   * 'in-progress'.
+   */
+  outcome: 'in-progress' | 'A' | 'B' | 'TIE';
   rounds: {
     roundId: string;
     roundName: string;
@@ -307,6 +497,8 @@ export function ryderBoard(db: DB): RyderBoard {
   let ptsB = 0;
   let provA = 0;
   let provB = 0;
+  let matchesTotal = 0;
+  let matchesFinal = 0;
   const rounds = matchRounds.map((round) => {
     const matches = db.matches.filter((m) => m.roundId === round.id).map((m) => computeMatch(db, round, m));
     for (const m of matches) {
@@ -314,10 +506,20 @@ export function ryderBoard(db: DB): RyderBoard {
       ptsB += m.points.B;
       provA += m.provisionalPoints.A;
       provB += m.provisionalPoints.B;
+      matchesTotal += 1;
+      if (m.final) matchesFinal += 1;
     }
     return { roundId: round.id, roundName: round.name, roundStatus: round.status, matches };
   });
   const totalPoints = matchRounds.reduce((sum, r) => sum + r.matchCount, 0);
+  const pointsToWin = totalPoints / 2 + 0.5;
+  // Only matches that exist can be final; the Cup is complete when all the
+  // scheduled matches exist and are final.
+  const allScheduledFinal = matchesTotal === totalPoints && matchesFinal === matchesTotal && matchesTotal > 0;
+  let outcome: RyderBoard['outcome'] = 'in-progress';
+  if (ptsA >= pointsToWin) outcome = 'A';
+  else if (ptsB >= pointsToWin) outcome = 'B';
+  else if (allScheduledFinal && ptsA === ptsB) outcome = 'TIE';
   const teams = db.ryderTeams.map((t) => ({
     id: t.id,
     name: t.name,
@@ -327,5 +529,5 @@ export function ryderBoard(db: DB): RyderBoard {
     points: t.id === 'A' ? ptsA : ptsB,
     provisional: t.id === 'A' ? provA : provB,
   }));
-  return { teams, totalPoints, pointsToWin: totalPoints / 2 + 0.5, rounds };
+  return { teams, totalPoints, pointsToWin, matchesTotal, matchesFinal, outcome, rounds };
 }

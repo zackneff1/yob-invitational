@@ -1,3 +1,5 @@
+import type { PolicyVersion } from './services/handicapMath';
+
 export interface Player {
   id: string;
   name: string;
@@ -38,6 +40,34 @@ export type RoundFormat = 'bestball-qualifier' | 'fourball' | 'stableford' | 'sc
  */
 export type RoundStatus = 'upcoming' | 'live' | 'final';
 
+/**
+ * Everything a round's results depend on, frozen when an admin starts it.
+ * While a snapshot exists, scoring reads from it — not from the live Course,
+ * Player or Round rows — so later Admin edits cannot rewrite a played round.
+ */
+export interface ScoringSnapshot {
+  version: 1;
+  policyVersion: PolicyVersion;
+  capturedAt: number;
+  roundId: string;
+  format: RoundFormat;
+  allowance: number;
+  course: Course;
+  players: { id: string; name: string; handicapIndex: number }[];
+  teams: { id: 'A' | 'B'; name: string; captainId: string | null; playerIds: string[] }[];
+  pairings: { id: string; name: string; playerIds: string[]; teeTime: string | null }[];
+  matches: { id: string; sideA: string[]; sideB: string[]; teeTime: string | null }[];
+  /**
+   * Strokes at capture time, for the record: per player (R1/R2/R3/R5) keyed by
+   * player id within a group, or per scramble side keyed `${matchId}:A`.
+   * Results are recomputed deterministically from the inputs above, so this is
+   * documentation of what the players were told, not an input.
+   */
+  strokes: Record<string, { strokes: number; allocation: number[] }>;
+  /** Lineup edits made after the round started (live rounds only), newest last. */
+  lineupHistory?: { at: number; by: string; matches: { id: string; sideA: string[]; sideB: string[] }[] }[];
+}
+
 export interface Round {
   id: string;
   name: string;
@@ -51,10 +81,8 @@ export interface Round {
   /** Handicap allowance applied to each player's course handicap (e.g. 0.85). */
   allowance: number;
   /**
-   * Retained for schema compatibility but no longer consulted: every format now
-   * plays off the low man. The scope is what varies — the full 12-man field for
-   * the qualifier, the players in a match for Rounds 2-5 — and that is decided
-   * by which players the leaderboard hands to handicapInfoFor.
+   * Retained for schema compatibility but no longer consulted. Which players
+   * are reduced, and how, is decided by the format (see handicapMath.groupStrokes).
    */
   playOffLow: boolean;
   /** Number of Ryder Cup matches in this round (0 for the qualifier). */
@@ -64,6 +92,7 @@ export interface Round {
   /** Epoch ms when an admin started / ended the round, or null. */
   startedAt: number | null;
   endedAt: number | null;
+  scoringSnapshot: ScoringSnapshot | null;
 }
 
 /** Round 1 two-man best-ball team (randomly drawn). */
@@ -93,8 +122,10 @@ export interface Match {
   sideB: string[];
   /** Admin override; when null the result is computed from scores. */
   result: MatchResult;
-  /** Epoch ms when the match was first seen final (null while still going). */
+  /** Epoch ms when the current final result was established (null while open). */
   closedAt: number | null;
+  /** Identity of the final result closedAt refers to. */
+  resultKey: string | null;
 }
 
 export type ScoreEntityType = 'player' | 'side';
@@ -106,7 +137,10 @@ export interface Score {
   /** playerId, or `${matchId}:A` / `${matchId}:B` for scramble sides. */
   entityId: string;
   hole: number;
-  strokes: number;
+  /** Gross strokes; null only for a pickup. */
+  strokes: number | null;
+  /** Explicit pickup / no return on this hole. */
+  pickup: boolean;
   updatedAt: number;
   updatedBy: string;
 }

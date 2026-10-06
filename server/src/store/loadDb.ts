@@ -1,4 +1,12 @@
-import { DB, Hole, MatchResult, RoundFormat, RoundStatus, ScoreEntityType } from '../types';
+import {
+  DB,
+  Hole,
+  MatchResult,
+  RoundFormat,
+  RoundStatus,
+  ScoreEntityType,
+  ScoringSnapshot,
+} from '../types';
 import { prisma } from './prisma';
 
 /**
@@ -32,6 +40,7 @@ export async function loadDb(): Promise<DB> {
       status: r.status as RoundStatus,
       startedAt: r.startedAt?.getTime() ?? null,
       endedAt: r.endedAt?.getTime() ?? null,
+      scoringSnapshot: (r.scoringSnapshot as unknown as ScoringSnapshot | null) ?? null,
     })),
     pairings,
     ryderTeams: ryderTeams.map((t) => ({ ...t, id: t.id as 'A' | 'B' })),
@@ -39,10 +48,13 @@ export async function loadDb(): Promise<DB> {
       ...m,
       result: m.result as MatchResult,
       closedAt: m.closedAt?.getTime() ?? null,
+      resultKey: m.resultKey ?? null,
     })),
     scores: scores.map((s) => ({
       ...s,
       entityType: s.entityType as ScoreEntityType,
+      strokes: s.strokes ?? null,
+      pickup: s.pickup ?? false,
       updatedAt: s.updatedAt.getTime(),
     })),
     settings: Object.fromEntries(settings.map((s) => [s.key, s.value])),

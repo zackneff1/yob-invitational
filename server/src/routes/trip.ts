@@ -1,7 +1,14 @@
 import { Router } from 'express';
+import { BUILD_ID, MIN_CLIENT_VERSION } from '../build';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error';
-import { courseHandicap, playingHandicap } from '../services/scoring';
+import { scoringBasis } from '../services/basis';
+import {
+  SCORING_POLICY_VERSION,
+  courseHandicapFromRaw,
+  playingHandicapFromRaw,
+} from '../services/handicapMath';
+import { courseHandicapRawFor } from '../services/scoring';
 import { loadDb } from '../store/loadDb';
 
 export const tripRouter = Router();
@@ -13,6 +20,9 @@ tripRouter.get(
   asyncHandler(async (_req, res) => {
     const db = await loadDb();
     res.json({
+      build: BUILD_ID,
+      minClientVersion: MIN_CLIENT_VERSION,
+      policyVersion: SCORING_POLICY_VERSION,
       players: db.users.map((p) => ({
         id: p.id,
         name: p.name,
@@ -22,14 +32,28 @@ tripRouter.get(
       })),
       courses: db.courses,
       rounds: db.rounds.map((r) => {
-        const course = db.courses.find((c) => c.id === r.courseId)!;
+        // Handicaps and the card come from the round's frozen basis once it
+        // has started, so the phone shows the same strokes the server scores.
+        const basis = scoringBasis(db, r);
+        const { scoringSnapshot, ...round } = r;
         return {
-          ...r,
-          courseHandicaps: db.users.map((p) => ({
-            playerId: p.id,
-            courseHandicap: courseHandicap(p.handicapIndex, course),
-            playingHandicap: playingHandicap(p.handicapIndex, course, r.allowance),
-          })),
+          ...round,
+          scoringCourse: basis.course,
+          policyVersion: basis.policy,
+          frozen: basis.frozen,
+          snapshotMissing: basis.snapshotMissing,
+          snapshotCapturedAt: basis.snapshotCapturedAt,
+          lineupHistory: scoringSnapshot?.lineupHistory ?? [],
+          courseHandicaps: basis.players.map((p) => {
+            const raw = courseHandicapRawFor(p.handicapIndex, basis.course, basis.policy);
+            return {
+              playerId: p.id,
+              handicapIndex: p.handicapIndex,
+              courseHandicapRaw: raw,
+              courseHandicap: courseHandicapFromRaw(raw),
+              playingHandicap: playingHandicapFromRaw(raw, basis.allowance, basis.policy),
+            };
+          }),
         };
       }),
       pairings: db.pairings,

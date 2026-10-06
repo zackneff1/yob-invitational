@@ -3,9 +3,16 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useMatchAlerts } from '../alerts';
 import { api } from '../api/client';
-import { flushQueue, onQueueChanged, onScoresSynced, pendingCount } from '../api/queue';
+import {
+  flushQueue,
+  onQueueChanged,
+  onScoresSynced,
+  pendingCount,
+  rejectedCount,
+} from '../api/queue';
 import { useAuth } from '../auth';
 import { useRyderBoard, useTrip } from '../hooks';
+import { CLIENT_VERSION } from '../version';
 import { BoardIcon, FlagIcon, PencilIcon, SlidersIcon, TrophyIcon } from './Icons';
 
 function useOnline(): boolean {
@@ -26,6 +33,10 @@ function usePending(): number {
   return useSyncExternalStore(onQueueChanged, pendingCount);
 }
 
+function useRejected(): number {
+  return useSyncExternalStore(onQueueChanged, rejectedCount);
+}
+
 type IconFn = (props: { active?: boolean }) => JSX.Element;
 
 const TABS: { to: string; label: string; Icon: IconFn; end?: boolean; adminOnly?: boolean }[] = [
@@ -36,10 +47,13 @@ const TABS: { to: string; label: string; Icon: IconFn; end?: boolean; adminOnly?
   { to: '/admin', label: 'Admin', Icon: SlidersIcon, adminOnly: true },
 ];
 
+const RELOADED_FLAG = 'yob.reloadedForUpdate';
+
 export function Layout() {
   const { auth, logout } = useAuth();
   const online = useOnline();
   const pending = usePending();
+  const rejected = useRejected();
   const queryClient = useQueryClient();
 
   const health = useQuery({
@@ -67,6 +81,23 @@ export function Layout() {
   const ryder = useRyderBoard();
   const { alerts, dismiss } = useMatchAlerts(ryder.data, trip.data?.rounds);
 
+  // Outdated build: the server wants a newer client. Reload once automatically
+  // (the service worker is network-first for the app shell, so this fetches
+  // the new build); if we're still old after that, show the banner and leave
+  // it to the person. Unsynced scores live in localStorage and survive.
+  const outdated = (trip.data?.minClientVersion ?? 0) > CLIENT_VERSION;
+  useEffect(() => {
+    if (!outdated) return;
+    try {
+      if (!sessionStorage.getItem(RELOADED_FLAG)) {
+        sessionStorage.setItem(RELOADED_FLAG, '1');
+        window.location.reload();
+      }
+    } catch {
+      /* fall through to the banner */
+    }
+  }, [outdated]);
+
   // The phone thinks it has signal but the server isn't answering — worth
   // flagging separately from being plainly offline.
   const serverDown = online && health.isError;
@@ -87,6 +118,11 @@ export function Layout() {
               {pending} unsynced
             </button>
           )}
+          {rejected > 0 && (
+            <Link to="/score" className="badge badge-rejected">
+              {rejected} not saved
+            </Link>
+          )}
           {auth && (
             <button className="badge badge-user" onClick={logout} title="Sign out">
               {auth.player.name.split(' ')[0]} ✕
@@ -94,6 +130,12 @@ export function Layout() {
           )}
         </div>
       </header>
+      {outdated && (
+        <div className="update-banner" role="alert">
+          <span>A newer version of the app is required to keep scoring.</span>
+          <button onClick={() => window.location.reload()}>Update now</button>
+        </div>
+      )}
       {alerts.length > 0 && (
         <div className="toast-stack" role="status" aria-live="polite">
           {alerts.map((a) => (

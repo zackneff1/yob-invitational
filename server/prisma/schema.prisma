@@ -50,6 +50,9 @@ model Round {
   status      String    @default("upcoming")
   startedAt   DateTime?
   endedAt     DateTime?
+  /// Frozen scoring basis (course card, indexes, allowance, policy version,
+  /// lineups) captured when the round is started. Null = scored live.
+  scoringSnapshot Json?
 
   course   Course    @relation(fields: [courseId], references: [id])
   pairings Pairing[]
@@ -84,8 +87,11 @@ model Match {
   sideA   String[]
   sideB   String[]
   result  String? // 'A' | 'B' | 'HALVED' — admin override
-  /// Stamped the first time the match is seen final; drives the "match closed" alerts.
+  /// Stamped when the match becomes final, and again whenever a final result
+  /// changes; drives the "match closed" alerts together with resultKey.
   closedAt DateTime?
+  /// Identity of the final result the stamp refers to, e.g. "A:3&2", "HALVED".
+  resultKey String?
 
   round Round @relation(fields: [roundId], references: [id])
 
@@ -97,7 +103,10 @@ model Score {
   entityType String // 'player' | 'side'
   entityId   String // playerId, or `${matchId}:A` / `${matchId}:B` for scramble sides
   hole       Int
-  strokes    Int
+  /// Gross strokes. Null only when pickup is true (no return on the hole).
+  strokes    Int?
+  /// Explicit pickup / no-return: the ball does not count on this hole.
+  pickup     Boolean  @default(false)
   updatedAt  DateTime
   updatedBy  String
 

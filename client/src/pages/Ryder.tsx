@@ -17,7 +17,7 @@ export function RyderPage() {
   if (board.isLoading) return <p className="muted">Loading…</p>;
   if (!board.data) return <p className="muted">Couldn’t load the Cup standings.</p>;
 
-  const { teams, totalPoints, pointsToWin, rounds } = board.data;
+  const { teams, totalPoints, pointsToWin, rounds, outcome } = board.data;
   const [a, b] = teams;
   const players = trip.data?.players ?? [];
 
@@ -59,10 +59,26 @@ export function RyderPage() {
           }}
         />
       </div>
+      {(outcome === 'A' || outcome === 'B') && (
+        <div className="card outcome-banner" style={{ borderColor: outcome === 'A' ? a.color : b.color }}>
+          🏆 <strong>{outcome === 'A' ? a.name : b.name}</strong> win the Cup,{' '}
+          {fmtPoints(outcome === 'A' ? a.points : b.points)}–{fmtPoints(outcome === 'A' ? b.points : a.points)}.
+        </div>
+      )}
+      {outcome === 'TIE' && (
+        <div className="card outcome-banner tie">
+          <strong>
+            Tied {fmtPoints(a.points)}–{fmtPoints(b.points)}.
+          </strong>{' '}
+          Every match is final and the points are level. Whether the Cup is shared, retained or
+          decided by a play-off is the organizers’ call — the app does not pick a winner.
+        </div>
+      )}
       <p className="muted small">
         Captains: {players.find((p) => p.id === a.captainId)?.name ?? 'TBD'} ({a.name}) ·{' '}
         {players.find((p) => p.id === b.captainId)?.name ?? 'TBD'} ({b.name}). Solid points are
-        final; projected includes matches still on the course.
+        confirmed finals only; projected adds matches still on the course as they provisionally
+        stand.
       </p>
 
       {rounds.map((round) => {

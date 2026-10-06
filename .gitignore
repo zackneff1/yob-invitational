@@ -16,3 +16,6 @@ data/
 # misc
 *.log
 .DS_Store
+
+# local audit bundle (contains fixture output; never commit)
+/audit/

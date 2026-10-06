@@ -1240,3 +1240,107 @@ button.ghost {
 .lodging ol li {
   margin: 0.2rem 0;
 }
+
+/* ── Pickups, provisional results, rejected drafts, update banner ───────── */
+.rc-pill.pending {
+  outline: 2px dashed rgba(255, 255, 255, 0.55);
+  outline-offset: -2px;
+  opacity: 0.85;
+}
+.rc-missing {
+  margin: 0.5rem 0 0;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.stepper-value.picked {
+  color: var(--amber);
+  font-size: 1.2rem;
+}
+.stepper .pickup-btn {
+  margin: 0 0 0 0.2rem;
+  min-height: 1.9rem;
+  padding: 0 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.cell-pickup {
+  width: 3.1rem;
+  min-height: 2.5rem;
+  margin: 0;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.score-grid.compact .cell-pickup {
+  width: 2.6rem;
+  min-height: 2.1rem;
+}
+.link-btn {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+  font-size: 0.63rem;
+  font-weight: 500;
+  text-decoration: underline dotted;
+}
+.entry-error {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.7rem;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.rejected-panel {
+  border-color: var(--amber);
+}
+.rejected-panel h2 {
+  margin-top: 0.1rem;
+}
+.rejected-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--border);
+}
+.badge-rejected {
+  background: var(--amber);
+  color: #1c1917;
+  text-decoration: none;
+}
+.update-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  background: var(--amber);
+  color: #1c1917;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.update-banner button {
+  margin: 0;
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  background: #1c1917;
+  color: #fff;
+}
+.tie-banner {
+  border-color: var(--amber);
+  font-size: 0.9rem;
+}
+.outcome-banner {
+  border-width: 2px;
+  font-size: 0.95rem;
+}
+.outcome-banner.tie {
+  border-color: var(--amber);
+}

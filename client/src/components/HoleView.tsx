@@ -5,7 +5,8 @@
  *
  * Scores here are entered with the −/+ buttons rather than a text field on
  * purpose: tapping a number input on a phone throws up the keyboard over half
- * the screen. Typing an exact score lives in the full-card view.
+ * the screen. Typing an exact score lives in the full-card view. A player who
+ * doesn't hole out taps "Pickup" — an explicit no-return, never a 0.
  */
 import { Course, Round } from '../api/types';
 import { Column, Group, ValueFor, strokesForHole, stablefordPoints } from '../scorecard';
@@ -19,6 +20,8 @@ interface Props {
   hole: number;
   valueFor: ValueFor;
   setScore: (col: Column, hole: number, raw: string) => void;
+  /** Record an explicit pickup / no return for the column on the hole. */
+  onPickup: (col: Column, hole: number) => void;
   /** Nudge a score by delta, starting from par when nothing is entered yet. */
   onAdjust: (col: Column, hole: number, delta: number, par: number) => void;
   onGoToHole: (hole: number) => void;
@@ -32,6 +35,7 @@ export function HoleView({
   hole,
   valueFor,
   setScore,
+  onPickup,
   onAdjust,
   onGoToHole,
   onFinish,
@@ -49,28 +53,33 @@ export function HoleView({
     .map((col) => ({ col, strokes: strokesOf(col) }))
     .filter(({ strokes }) => strokes > 0);
 
-  const allScored = (holeNumber: number) =>
-    group.columns.every((col) => typeof valueFor(col, holeNumber) === 'number');
+  /** Every ball on the hole is resolved: a score or a pickup. */
+  const allResolved = (holeNumber: number) =>
+    group.columns.every((col) => valueFor(col, holeNumber) !== '');
 
   const bump = (col: Column, delta: number) => onAdjust(col, current.number, delta, current.par);
 
-  /** Match play: who took this hole, once both sides have a score on it. */
+  /** Match play: who took this hole, once every ball on it is resolved. */
   const holeResult = (): string | null => {
     if (!isMatchPlay || !group.match) return null;
-    const netOf = (ids: string[]) =>
+    const netsOf = (ids: string[]) =>
       ids
         .map((id) => group.columns.find((c) => c.entityId === id))
         .filter((c): c is Column => Boolean(c))
         .map((c) => {
           const g = valueFor(c, current.number);
-          return typeof g === 'number' ? g - strokesOf(c) : null;
-        })
-        .filter((v): v is number => v != null);
-    const a = netOf(group.match.sideA);
-    const b = netOf(group.match.sideB);
-    if (!a.length || !b.length) return null;
-    const bestA = Math.min(...a);
-    const bestB = Math.min(...b);
+          return typeof g === 'number' ? g - strokesOf(c) : g;
+        });
+    const a = netsOf(group.match.sideA);
+    const b = netsOf(group.match.sideB);
+    if ([...a, ...b].some((v) => v === '')) return null;
+    const numA = a.filter((v): v is number => typeof v === 'number');
+    const numB = b.filter((v): v is number => typeof v === 'number');
+    if (!numA.length && !numB.length) return 'Hole halved (both sides picked up)';
+    if (!numA.length) return `${group.match.teamB} wins the hole (${group.match.teamA} picked up)`;
+    if (!numB.length) return `${group.match.teamA} wins the hole (${group.match.teamB} picked up)`;
+    const bestA = Math.min(...numA);
+    const bestB = Math.min(...numB);
     if (bestA === bestB) return `Hole halved (net ${bestA})`;
     return `${bestA < bestB ? group.match.teamA : group.match.teamB} wins the hole (net ${Math.min(bestA, bestB)} to ${Math.max(bestA, bestB)})`;
   };
@@ -133,7 +142,7 @@ export function HoleView({
           <button
             key={h.number}
             className={`hole-pip ${h.number === current.number ? 'active' : ''} ${
-              allScored(h.number) ? 'done' : ''
+              allResolved(h.number) ? 'done' : ''
             }`}
             aria-label={`Go to hole ${h.number}`}
             onClick={() => onGoToHole(h.number)}
@@ -146,6 +155,7 @@ export function HoleView({
       {group.columns.map((col) => {
         const strokes = strokesOf(col);
         const gross = valueFor(col, current.number);
+        const picked = gross === 'pickup';
         const net = typeof gross === 'number' ? gross - strokes : null;
         return (
           <div className="card hole-player" key={col.entityId}>
@@ -165,22 +175,26 @@ export function HoleView({
               <button
                 aria-label={`Lower ${col.label}'s score`}
                 onClick={() => bump(col, -1)}
-                disabled={gross === '' || gross === 1}
+                disabled={gross === '' || picked || gross === 1}
               >
                 −
               </button>
               <span
-                className={`stepper-value ${gross === '' ? 'empty' : ''}`}
+                className={`stepper-value ${gross === '' ? 'empty' : ''} ${picked ? 'picked' : ''}`}
                 role="status"
-                aria-label={`${col.label} gross score${gross === '' ? ' not entered' : `: ${gross}`}`}
+                aria-label={`${col.label} gross score${
+                  gross === '' ? ' not entered' : picked ? ': picked up' : `: ${gross}`
+                }`}
               >
-                {gross === '' ? '–' : gross}
+                {gross === '' ? '–' : picked ? 'P' : gross}
               </span>
               <button aria-label={`Raise ${col.label}'s score`} onClick={() => bump(col, 1)}>
                 +
               </button>
               <span className="stepper-result">
-                {net != null ? (
+                {picked ? (
+                  <span className="muted small">picked up · no score</span>
+                ) : net != null ? (
                   <>
                     <span className="stepper-net">
                       net <strong>{net}</strong>
@@ -196,11 +210,20 @@ export function HoleView({
                   <span className="muted small">gross</span>
                 )}
               </span>
-              {typeof gross === 'number' && (
+              {col.entityType === 'player' && !picked && (
+                <button
+                  className="ghost pickup-btn"
+                  title="Didn't hole out — the ball doesn't count on this hole"
+                  onClick={() => onPickup(col, current.number)}
+                >
+                  Pickup
+                </button>
+              )}
+              {gross !== '' && (
                 <button
                   className="ghost clear-score"
-                  aria-label={`Clear ${col.label}'s score`}
-                  title="Clear this score"
+                  aria-label={`Clear ${col.label}'s ${picked ? 'pickup' : 'score'}`}
+                  title={picked ? 'Clear the pickup' : 'Clear this score'}
                   onClick={() => setScore(col, current.number, '')}
                 >
                   ✕

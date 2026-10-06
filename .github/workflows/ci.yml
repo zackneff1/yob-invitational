@@ -15,3 +15,4 @@ jobs:
           node-version: 20
       - run: npm install --include=dev
       - run: npm run build
+      - run: npm test
