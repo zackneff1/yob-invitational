@@ -89,8 +89,26 @@ export function pendingCount(): number {
   return Object.keys(read()).length;
 }
 
+// useSyncExternalStore needs a snapshot that is referentially stable while the
+// store is unchanged, or React re-renders forever (error #185). Cache the
+// parsed list against the raw stored string.
+let rejectedCacheRaw: string | null | undefined;
+let rejectedCacheValue: RejectedDraft[] = [];
+
 export function rejectedDrafts(): RejectedDraft[] {
-  return Object.values(readStore<RejectedDraft>(REJECTED_KEY)).sort((a, b) => b.rejectedAt - a.rejectedAt);
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(REJECTED_KEY);
+  } catch {
+    raw = null;
+  }
+  if (raw !== rejectedCacheRaw) {
+    rejectedCacheRaw = raw;
+    rejectedCacheValue = Object.values(readStore<RejectedDraft>(REJECTED_KEY)).sort(
+      (a, b) => b.rejectedAt - a.rejectedAt,
+    );
+  }
+  return rejectedCacheValue;
 }
 
 export function rejectedCount(): number {
