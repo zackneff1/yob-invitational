@@ -93,17 +93,25 @@ export interface ComputedMatch {
   sideA: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   sideB: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   thru: number;
+  /** Holes on the course, so clients can render "thru 12 of 18". */
+  holeCount: number;
   /** Which side leads right now (null = all square / no scores). */
   leader: 'A' | 'B' | null;
   margin: number;
   decided: boolean;
   final: boolean;
+  /** Holes left when a match-play match was closed out early (the "2" in 3&2). */
+  closeoutRemaining: number;
   overridden: boolean;
+  /** Epoch ms the match was first seen final, or null while still going. */
+  closedAt: number | null;
   statusText: string;
   points: { A: number; B: number };
   /** Points if every unfinished match ended right now. */
   provisionalPoints: { A: number; B: number };
   detail?: { totalA: number; totalB: number; unit: string };
+  /** Scramble only: strokes each side receives (team handicap, off the lower side). */
+  sideStrokes?: { A: number; B: number };
 }
 
 function resultToPoints(result: Exclude<MatchResult, null>): { A: number; B: number } {
@@ -136,14 +144,15 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
   let margin = 0;
   let decided = false;
   let final = false;
+  let closeoutRemaining = 0;
   let statusText = 'Not started';
   let detail: ComputedMatch['detail'];
+  let sideStrokes: ComputedMatch['sideStrokes'];
 
   if (round.format === 'fourball' || round.format === 'singles') {
     // Hole-by-hole match play on best net ball. Holes are processed in order
     // and we stop at the first hole either side hasn't scored.
     let diff = 0; // positive = A up
-    let closeoutRemaining = 0;
     for (const hole of course.holes) {
       const netsA = infosA.map((i) => netFor(map, i, hole, n)).filter((v): v is number => v != null);
       const netsB = infosB.map((i) => netFor(map, i, hole, n)).filter((v): v is number => v != null);
@@ -204,6 +213,7 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
     const low = Math.min(phA, phB);
     const effA = phA - low;
     const effB = phB - low;
+    sideStrokes = { A: effA, B: effB };
     let netA = 0;
     let netB = 0;
     for (const hole of course.holes) {
@@ -255,15 +265,19 @@ export function computeMatch(db: DB, round: Round, match: Match): ComputedMatch 
     sideA: { teamName: teamA.name, color: teamA.color, players: infosA },
     sideB: { teamName: teamB.name, color: teamB.color, players: infosB },
     thru,
+    holeCount: n,
     leader,
     margin,
     decided,
     final,
+    closeoutRemaining,
     overridden,
+    closedAt: match.closedAt,
     statusText,
     points,
     provisionalPoints,
     detail,
+    sideStrokes,
   };
 }
 
@@ -279,7 +293,12 @@ export interface RyderBoard {
   }[];
   totalPoints: number;
   pointsToWin: number;
-  rounds: { roundId: string; roundName: string; matches: ComputedMatch[] }[];
+  rounds: {
+    roundId: string;
+    roundName: string;
+    roundStatus: Round['status'];
+    matches: ComputedMatch[];
+  }[];
 }
 
 export function ryderBoard(db: DB): RyderBoard {
@@ -296,7 +315,7 @@ export function ryderBoard(db: DB): RyderBoard {
       provA += m.provisionalPoints.A;
       provB += m.provisionalPoints.B;
     }
-    return { roundId: round.id, roundName: round.name, matches };
+    return { roundId: round.id, roundName: round.name, roundStatus: round.status, matches };
   });
   const totalPoints = matchRounds.reduce((sum, r) => sum + r.matchCount, 0);
   const teams = db.ryderTeams.map((t) => ({

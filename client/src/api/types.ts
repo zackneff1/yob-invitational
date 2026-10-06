@@ -31,6 +31,9 @@ export interface Course {
 
 export type RoundFormat = 'bestball-qualifier' | 'fourball' | 'stableford' | 'scramble' | 'singles';
 
+/** Admins move rounds upcoming → live → final; only one round is live at a time. */
+export type RoundStatus = 'upcoming' | 'live' | 'final';
+
 export interface Round {
   id: string;
   name: string;
@@ -45,6 +48,9 @@ export interface Round {
   playOffLow: boolean;
   matchCount: number;
   description: string;
+  status: RoundStatus;
+  startedAt: number | null;
+  endedAt: number | null;
   courseHandicaps: { playerId: string; courseHandicap: number; playingHandicap: number }[];
 }
 
@@ -71,6 +77,7 @@ export interface Match {
   sideA: string[];
   sideB: string[];
   result: 'A' | 'B' | 'HALVED' | null;
+  closedAt: number | null;
 }
 
 export interface Trip {
@@ -80,6 +87,8 @@ export interface Trip {
   pairings: Pairing[];
   ryderTeams: RyderTeam[];
   matches: Match[];
+  /** Key/value trip settings set in Admin (lodging door codes etc.). */
+  settings: Record<string, string>;
 }
 
 export interface Score {
@@ -120,15 +129,20 @@ export interface ComputedMatch {
   sideA: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   sideB: { teamName: string; color: string; players: PlayerHandicapInfo[] };
   thru: number;
+  holeCount: number;
   leader: 'A' | 'B' | null;
   margin: number;
   decided: boolean;
   final: boolean;
+  closeoutRemaining: number;
   overridden: boolean;
+  closedAt: number | null;
   statusText: string;
   points: { A: number; B: number };
   provisionalPoints: { A: number; B: number };
   detail?: { totalA: number; totalB: number; unit: string };
+  /** Scramble only: strokes each side receives (team handicap, off the lower side). */
+  sideStrokes?: { A: number; B: number };
 }
 
 export type RoundLeaderboard =
@@ -147,7 +161,12 @@ export interface RyderBoard {
   }[];
   totalPoints: number;
   pointsToWin: number;
-  rounds: { roundId: string; roundName: string; matches: ComputedMatch[] }[];
+  rounds: {
+    roundId: string;
+    roundName: string;
+    roundStatus: RoundStatus;
+    matches: ComputedMatch[];
+  }[];
 }
 
 export interface AuthResponse {

@@ -1,21 +1,116 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { descriptionWithoutHandicapRule, handicapRule } from '../roundRules';
-import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
+import { LODGING, mapsLink, smsLink, telLink } from '../lodging';
+import { notificationPermission, requestNotifications } from '../notify';
+import { descriptionWithoutHandicapRule, handicapRule } from '../roundRules';
+import { leaderboardRounds, statusLabel } from '../rounds';
+import { courseClockNote, localTime, zoneFor } from '../teeTimes';
+
+function AlertsCard() {
+  const [permission, setPermission] = useState(notificationPermission());
+  const enable = async () => setPermission(await requestNotifications());
+  return (
+    <section className="card">
+      <h2>Match alerts</h2>
+      <p className="muted small">
+        Whenever a match closes in Rounds 2–5, a banner pops up in the app for everyone with the
+        result.
+        {permission === 'granted' && ' Phone notifications are on for this device too.'}
+        {permission === 'denied' &&
+          ' Phone notifications are blocked for this site in your browser settings.'}
+      </p>
+      {permission === 'default' && (
+        <>
+          <button onClick={() => void enable()}>🔔 Also buzz my phone</button>
+          <p className="muted small">
+            On iPhone this only works once the app is on your Home Screen (Share → Add to Home
+            Screen) and you open it from there.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function LodgingCard({ settings }: { settings: Record<string, string> }) {
+  const confirmation = settings[LODGING.confirmationKey];
+  return (
+    <section className="card lodging">
+      <h2>Where we&apos;re staying</h2>
+      <p className="muted small">
+        Two houses across the street from each other at The Ledges, 15 minutes north of town. No
+        check-in desk — drive straight to the house and let yourself in with the door code.
+      </p>
+      <p>
+        <strong>Check in:</strong> {LODGING.checkIn} · <strong>Check out:</strong>{' '}
+        {LODGING.checkOut}
+      </p>
+      {LODGING.houses.map((house) => {
+        const code = settings[house.codeKey];
+        return (
+          <div key={house.id} className="house">
+            <h3>{house.name}</h3>
+            <a href={mapsLink(house.address)} target="_blank" rel="noreferrer">
+              {house.address} ↗
+            </a>
+            <div className="muted small">{house.whichSide}</div>
+            <div>
+              <span className="muted small">Front door code: </span>
+              {code ? (
+                <strong className="door-code">{code}</strong>
+              ) : (
+                <span className="muted small">not entered yet — an admin adds it under Admin → Lodging</span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <details>
+        <summary>Keypad: how to get in</summary>
+        <ol>
+          {LODGING.keypad.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        <p className="muted small">Codes are registered under {LODGING.codeHolder}&apos;s name.</p>
+      </details>
+      <details>
+        <summary>Driving directions from St. George</summary>
+        <ol>
+          {LODGING.directions.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        <p className="muted small">
+          Red Rock Peace (4975) will be on your left, Red Rock Getaway (4958) on your right.
+        </p>
+      </details>
+      <p className="muted small">
+        {LODGING.manager}: call <a href={telLink(LODGING.officePhone)}>{LODGING.officePhone}</a> or
+        text <a href={smsLink(LODGING.textLine)}>{LODGING.textLine}</a> (also after hours). Their
+        online guest guide logs in with arrival date {LODGING.guestGuideArrival} and confirmation
+        number {confirmation ? <strong>{confirmation}</strong> : '(ask Aaron)'}.
+      </p>
+    </section>
+  );
+}
 
 export function OverviewPage() {
   const trip = useTrip();
   if (trip.isLoading) return <p className="muted">Loading trip…</p>;
   if (!trip.data) return <p className="muted">Couldn’t load the trip. Pull down to retry.</p>;
-  const { rounds, courses, players, ryderTeams } = trip.data;
+  const { rounds, courses, players, ryderTeams, settings } = trip.data;
 
   const teamsDrafted = ryderTeams.some((t) => t.playerIds.length > 0);
+  const boardRounds = leaderboardRounds(rounds);
 
   return (
     <div className="page">
       <h1>Trip Overview</h1>
       <p className="muted">
-        12 players · Ryder Cup format · Round 1 decides the captains, draft is live after.
+        12 players · Ryder Cup format · Round 1 decides the captains, draft is live after. All
+        times are St. George (Mountain) time.
       </p>
 
       {teamsDrafted && (
@@ -46,18 +141,30 @@ export function OverviewPage() {
         <h2>Schedule & Formats</h2>
         {rounds.map((round) => {
           const course = courses.find((c) => c.id === round.courseId);
+          const zone = zoneFor(course);
+          const clockNote = courseClockNote(round.teeTimes, zone);
+          const onBoard = boardRounds.some((r) => r.id === round.id);
           return (
-            <div key={round.id} className="card round-card">
+            <div key={round.id} className={`card round-card ${round.status}`}>
               <div className="round-card-head">
                 <div>
-                  <h3>{round.name}</h3>
+                  <h3>
+                    {round.name}
+                    {round.status !== 'upcoming' && (
+                      <span className={`status-badge ${round.status}`}>
+                        {statusLabel(round.status)}
+                      </span>
+                    )}
+                  </h3>
                   <p className="muted">
                     {round.dayLabel} · {course?.name} ({course?.location})
                   </p>
                 </div>
-                <Link className="pill-link" to={`/leaderboard/${round.id}`}>
-                  Live →
-                </Link>
+                {onBoard && (
+                  <Link className="pill-link" to={`/leaderboard/${round.id}`}>
+                    Leaderboard →
+                  </Link>
+                )}
               </div>
               <p>
                 <strong>{round.formatLabel}</strong>
@@ -68,13 +175,9 @@ export function OverviewPage() {
               </p>
               <p>
                 <strong>Tee times:</strong>{' '}
-                {withZone(round.teeTimes.join(' · '), zoneFor(course))}
+                {round.teeTimes.map((t) => localTime(t, zone)).join(' · ')}
               </p>
-              {mountainEquivalentNote(round.teeTimes, zoneFor(course)) && (
-                <p className="tz-note">
-                  ⏰ {mountainEquivalentNote(round.teeTimes, zoneFor(course))}
-                </p>
-              )}
+              {clockNote && <p className="tz-note">⏰ {clockNote}</p>}
               <p className="muted">
                 {course?.tee !== 'TBD' ? `${course?.tee} tees · ` : ''}
                 Par {course?.par} · Rating {course?.rating} · Slope {course?.slope}
@@ -84,6 +187,10 @@ export function OverviewPage() {
           );
         })}
       </section>
+
+      <LodgingCard settings={settings ?? {}} />
+
+      <AlertsCard />
 
       <section className="card">
         <h2>Players & Handicaps</h2>

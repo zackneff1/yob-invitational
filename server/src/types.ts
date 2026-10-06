@@ -31,6 +31,13 @@ export interface Course {
 
 export type RoundFormat = 'bestball-qualifier' | 'fourball' | 'stableford' | 'scramble' | 'singles';
 
+/**
+ * Where a round is in its life. Admins move rounds through these from the
+ * Admin tab; only one round is 'live' at a time, and that is the round
+ * everyone else scores.
+ */
+export type RoundStatus = 'upcoming' | 'live' | 'final';
+
 export interface Round {
   id: string;
   name: string;
@@ -53,6 +60,10 @@ export interface Round {
   /** Number of Ryder Cup matches in this round (0 for the qualifier). */
   matchCount: number;
   description: string;
+  status: RoundStatus;
+  /** Epoch ms when an admin started / ended the round, or null. */
+  startedAt: number | null;
+  endedAt: number | null;
 }
 
 /** Round 1 two-man best-ball team (randomly drawn). */
@@ -82,6 +93,8 @@ export interface Match {
   sideB: string[];
   /** Admin override; when null the result is computed from scores. */
   result: MatchResult;
+  /** Epoch ms when the match was first seen final (null while still going). */
+  closedAt: number | null;
 }
 
 export type ScoreEntityType = 'player' | 'side';
@@ -106,4 +119,6 @@ export interface DB {
   ryderTeams: RyderTeam[];
   matches: Match[];
   scores: Score[];
+  /** Key/value trip settings (see the Setting model). */
+  settings: Record<string, string>;
 }

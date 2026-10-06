@@ -1,15 +1,36 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { Course, Match, Pairing, RyderTeam, Trip } from '../api/types';
-import { withZone, zoneFor } from '../teeTimes';
+import { Course, Match, Pairing, Round, RoundStatus, RyderTeam, Trip } from '../api/types';
+import { LODGING } from '../lodging';
+import { liveRound, roundNickname, roundShort, statusLabel } from '../rounds';
+import { localTime, zoneFor } from '../teeTimes';
 import { useTrip } from '../hooks';
 
-type Tab = 'players' | 'pairings' | 'teams' | 'matches' | 'courses' | 'reset';
+type Tab =
+  | 'rounds'
+  | 'players'
+  | 'pairings'
+  | 'teams'
+  | 'matches'
+  | 'courses'
+  | 'lodging'
+  | 'reset';
+
+const TAB_LABELS: Record<Tab, string> = {
+  rounds: 'rounds',
+  players: 'players',
+  pairings: 'R1 draw',
+  teams: 'teams',
+  matches: 'lineups',
+  courses: 'courses',
+  lodging: 'lodging',
+  reset: 'reset',
+};
 
 export function AdminPage() {
   const trip = useTrip();
-  const [tab, setTab] = useState<Tab>('players');
+  const [tab, setTab] = useState<Tab>('rounds');
   const [message, setMessage] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
@@ -30,18 +51,20 @@ export function AdminPage() {
     <div className="page">
       <h1>Admin</h1>
       <div className="chip-row">
-        {(['players', 'pairings', 'teams', 'matches', 'courses', 'reset'] as Tab[]).map((t) => (
+        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
           <button key={t} className={`chip ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'pairings' ? 'R1 draw' : t}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
       {message && <p className="form-success">{message}</p>}
+      {tab === 'rounds' && <RoundsTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'players' && <PlayersTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'pairings' && <PairingsTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'teams' && <TeamsTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'matches' && <MatchesTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'courses' && <CoursesTab trip={trip.data} onSaved={refresh} notify={notify} />}
+      {tab === 'lodging' && <LodgingTab trip={trip.data} onSaved={refresh} notify={notify} />}
       {tab === 'reset' && <ResetTab trip={trip.data} onSaved={refresh} notify={notify} />}
     </div>
   );
@@ -51,6 +74,129 @@ interface TabProps {
   trip: Trip;
   onSaved: () => void;
   notify: (msg: string) => void;
+}
+
+function fmtWhen(ms: number): string {
+  return new Date(ms).toLocaleString([], {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Denver',
+  });
+}
+
+/** Start / end rounds — this is what scopes everyone's Score tab. */
+function RoundsTab({ trip, onSaved, notify }: TabProps) {
+  const live = liveRound(trip.rounds);
+
+  const setStatus = async (round: Round, status: RoundStatus) => {
+    const nick = roundNickname(round);
+    if (status === 'live' && live && live.id !== round.id) {
+      if (
+        !window.confirm(
+          `Start ${nick}? That ends ${roundNickname(live)} — everyone's Score tab moves to ${nick}.`,
+        )
+      )
+        return;
+    }
+    if (status === 'final' && !window.confirm(`End ${nick}? Players can no longer enter scores for it (admins still can).`)) return;
+    if (status === 'upcoming' && !window.confirm(`Put ${nick} back to "upcoming"? Scores are kept; it just stops being the live round.`)) return;
+    await api(`/api/admin/rounds/${round.id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+    notify(status === 'live' ? `${nick} started` : status === 'final' ? `${nick} ended` : `${nick} reset`);
+    onSaved();
+  };
+
+  return (
+    <section className="card">
+      <h2>Start &amp; end rounds</h2>
+      <p className="muted small">
+        Everyone&apos;s Score tab shows the <strong>live</strong> round only, and the Leaderboard
+        offers rounds that have started plus the next one up. Start a round when the first group
+        tees off and end it when the last card is in. Only one round is live at a time — starting
+        the next one ends the current one.
+      </p>
+      {trip.rounds.map((r) => (
+        <div key={r.id} className="round-admin-row">
+          <div>
+            <strong>
+              {roundShort(trip.rounds, r)} · {roundNickname(r)}
+            </strong>
+            <span className={`status-badge ${r.status}`}>{statusLabel(r.status)}</span>
+            <div className="muted small">
+              {r.dayLabel}
+              {r.startedAt ? ` · started ${fmtWhen(r.startedAt)}` : ''}
+              {r.endedAt ? ` · ended ${fmtWhen(r.endedAt)}` : ''}
+            </div>
+          </div>
+          <div className="row-actions">
+            {r.status === 'upcoming' && (
+              <button onClick={() => void setStatus(r, 'live')}>Start round</button>
+            )}
+            {r.status === 'live' && (
+              <button onClick={() => void setStatus(r, 'final')}>End round</button>
+            )}
+            {r.status === 'final' && (
+              <button className="ghost" onClick={() => void setStatus(r, 'live')}>
+                Reopen
+              </button>
+            )}
+            {r.status !== 'upcoming' && (
+              <button className="ghost" onClick={() => void setStatus(r, 'upcoming')}>
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+const LODGING_FIELDS: { key: string; label: string }[] = [
+  ...LODGING.houses.map((h) => ({ key: h.codeKey, label: `${h.name} — front door code` })),
+  { key: LODGING.confirmationKey, label: 'Guest guide confirmation number' },
+];
+
+/** Door codes live in the database, not the (public) source code. */
+function LodgingTab({ trip, onSaved, notify }: TabProps) {
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setValues(Object.fromEntries(LODGING_FIELDS.map((f) => [f.key, trip.settings?.[f.key] ?? ''])));
+  }, [trip.settings]);
+
+  const save = async () => {
+    await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ settings: values }) });
+    notify('Lodging info saved');
+    onSaved();
+  };
+
+  return (
+    <section className="card">
+      <h2>Lodging</h2>
+      <p className="muted small">
+        Addresses, directions and the rental office number are built into the Trip page. The door
+        codes and the guest-guide confirmation number are entered here instead, because the
+        app&apos;s source code is public on GitHub — anything typed here is only shown to people
+        signed in to the app. Leave a field blank to hide it.
+      </p>
+      {LODGING_FIELDS.map((f) => (
+        <label key={f.key}>
+          {f.label}
+          <input
+            value={values[f.key] ?? ''}
+            inputMode="numeric"
+            autoComplete="off"
+            onChange={(e) => setValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
+          />
+        </label>
+      ))}
+      <button onClick={() => void save()}>Save lodging info</button>
+    </section>
+  );
 }
 
 function PlayersTab({ trip, onSaved, notify }: TabProps) {
@@ -185,7 +331,7 @@ function PairingsTab({ trip, onSaved, notify }: TabProps) {
             <option value="">tee time…</option>
             {round.teeTimes.map((t) => (
               <option key={t} value={t}>
-                {withZone(t, zone)}
+                {localTime(t, zone)}
               </option>
             ))}
           </select>
@@ -307,6 +453,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
           sideA: [],
           sideB: [],
           result: null,
+          closedAt: null,
         })),
       );
   }, [round, trip.matches]);
@@ -350,12 +497,23 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
     onSaved();
   };
 
-  const playerOptions = (teamIds: string[]) =>
-    teamIds.map((id) => (
-      <option key={id} value={id}>
-        {trip.players.find((p) => p.id === id)?.name}
-      </option>
-    ));
+  // A player already placed in any match this round disappears from the other
+  // dropdowns, so a lineup can't double-book anyone. The slot's own pick stays.
+  const usedElsewhere = (current: string) => {
+    const used = new Set(matches.flatMap((m) => [...m.sideA, ...m.sideB]));
+    used.delete(current);
+    return used;
+  };
+  const playerOptions = (teamIds: string[], current: string) => {
+    const taken = usedElsewhere(current);
+    return teamIds
+      .filter((id) => !taken.has(id))
+      .map((id) => (
+        <option key={id} value={id}>
+          {trip.players.find((p) => p.id === id)?.name}
+        </option>
+      ));
+  };
 
   return (
     <section className="card">
@@ -367,7 +525,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
             className={`chip ${r.id === roundId ? 'active' : ''}`}
             onClick={() => setRoundId(r.id)}
           >
-            {r.name.split('—')[1]?.trim() ?? r.name}
+            {roundNickname(r)}
           </button>
         ))}
       </div>
@@ -386,7 +544,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
                 onChange={(e) => setSide(mi, 'sideA', slot, e.target.value)}
               >
                 <option value="">{teamA.name}…</option>
-                {playerOptions(teamA.playerIds)}
+                {playerOptions(teamA.playerIds, m.sideA[slot] ?? '')}
               </select>
             ))}
             <span>vs</span>
@@ -397,7 +555,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
                 onChange={(e) => setSide(mi, 'sideB', slot, e.target.value)}
               >
                 <option value="">{teamB.name}…</option>
-                {playerOptions(teamB.playerIds)}
+                {playerOptions(teamB.playerIds, m.sideB[slot] ?? '')}
               </select>
             ))}
             <select
@@ -411,7 +569,7 @@ function MatchesTab({ trip, onSaved, notify }: TabProps) {
               <option value="">tee…</option>
               {round.teeTimes.map((t) => (
                 <option key={t} value={t}>
-                  {withZone(t, zone)}
+                  {localTime(t, zone)}
                 </option>
               ))}
             </select>

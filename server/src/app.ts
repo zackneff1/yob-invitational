@@ -32,6 +32,12 @@ export function createApp(): express.Express {
     }),
   );
 
+  // API answers are live scoring data: never let a browser, the installed
+  // app's HTTP cache, or a proxy hand back a stale copy.
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   app.use('/api', apiRouter);
   app.use('/api', apiNotFound);
 

@@ -8,15 +8,8 @@
  * the screen. Typing an exact score lives in the full-card view.
  */
 import { Course, Round } from '../api/types';
-import {
-  Column,
-  Group,
-  ValueFor,
-  liveStatus,
-  statsFor,
-  strokesForHole,
-  stablefordPoints,
-} from '../scorecard';
+import { Column, Group, ValueFor, strokesForHole, stablefordPoints } from '../scorecard';
+import { GroupScoreboard } from './GroupScoreboard';
 
 interface Props {
   course: Course;
@@ -47,7 +40,7 @@ export function HoleView({
   const current = course.holes.find((h) => h.number === hole) ?? course.holes[0];
   const isLast = current.number === holeCount;
   const isStableford = round.format === 'stableford';
-  const status = liveStatus(course, round, group, valueFor);
+  const isMatchPlay = round.format === 'fourball' || round.format === 'singles';
 
   const strokesOf = (col: Column) => strokesForHole(course, col, current);
 
@@ -61,16 +54,31 @@ export function HoleView({
 
   const bump = (col: Column, delta: number) => onAdjust(col, current.number, delta, current.par);
 
+  /** Match play: who took this hole, once both sides have a score on it. */
+  const holeResult = (): string | null => {
+    if (!isMatchPlay || !group.match) return null;
+    const netOf = (ids: string[]) =>
+      ids
+        .map((id) => group.columns.find((c) => c.entityId === id))
+        .filter((c): c is Column => Boolean(c))
+        .map((c) => {
+          const g = valueFor(c, current.number);
+          return typeof g === 'number' ? g - strokesOf(c) : null;
+        })
+        .filter((v): v is number => v != null);
+    const a = netOf(group.match.sideA);
+    const b = netOf(group.match.sideB);
+    if (!a.length || !b.length) return null;
+    const bestA = Math.min(...a);
+    const bestB = Math.min(...b);
+    if (bestA === bestB) return `Hole halved (net ${bestA})`;
+    return `${bestA < bestB ? group.match.teamA : group.match.teamB} wins the hole (net ${Math.min(bestA, bestB)} to ${Math.max(bestA, bestB)})`;
+  };
+  const result = holeResult();
+
   return (
     <div className="hole-play">
-      {status && (
-        <div className="match-status-bar">
-          <span className="match-status-label">
-            {round.format === 'bestball-qualifier' ? 'Team' : 'Match'}
-          </span>
-          <span className="match-status-text">{status}</span>
-        </div>
-      )}
+      <GroupScoreboard course={course} round={round} group={group} valueFor={valueFor} compact />
 
       <div className="card hole-head">
         <div className="hole-nav">
@@ -203,6 +211,8 @@ export function HoleView({
         );
       })}
 
+      {result && <p className="hole-result">{result}</p>}
+
       <div className="hole-actions">
         {isLast ? (
           <button className="hole-next" onClick={onFinish}>
@@ -213,31 +223,6 @@ export function HoleView({
             Next hole →
           </button>
         )}
-      </div>
-
-      <div className="score-summary">
-        {group.columns.map((col) => {
-          const stats = statsFor(course, col, valueFor);
-          return (
-            <div className="summary-card" key={col.entityId}>
-              <div className="summary-name">{col.label}</div>
-              {stats.thru > 0 ? (
-                <>
-                  <div className="summary-figures">
-                    <span className="summary-net">{stats.net}</span>
-                    <span className="summary-gross">net</span>
-                  </div>
-                  <div className="summary-thru">
-                    {stats.gross} gross · thru {stats.thru}
-                    {isStableford ? ` · ${stats.points} pt${stats.points === 1 ? '' : 's'}` : ''}
-                  </div>
-                </>
-              ) : (
-                <div className="summary-thru">no scores yet</div>
-              )}
-            </div>
-          );
-        })}
       </div>
     </div>
   );

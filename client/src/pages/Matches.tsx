@@ -1,89 +1,151 @@
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ComputedMatch } from '../api/types';
+import { ComputedMatch, Round, RyderTeam } from '../api/types';
+import { MatchScoreboard } from '../components/MatchScoreboard';
 import { useRoundLeaderboard, useTrip } from '../hooks';
+import { sidesFromComputed, stateFromComputed } from '../matchState';
 import { handicapRule } from '../roundRules';
-import { TeeZone, withZone, zoneFor } from '../teeTimes';
+import {
+  defaultLeaderboardRound,
+  leaderboardRounds,
+  roundNickname,
+  roundShort,
+  statusLabel,
+} from '../rounds';
+import { TeeZone, localTime, zoneFor } from '../teeTimes';
 
 function fmtToPar(toPar: number): string {
   if (toPar === 0) return 'E';
   return toPar > 0 ? `+${toPar}` : `${toPar}`;
 }
 
+function fmtPoints(p: number): string {
+  const whole = Math.floor(p);
+  const half = p - whole === 0.5;
+  if (whole === 0 && half) return '½';
+  return `${whole}${half ? '½' : ''}`;
+}
+
+/** One match, Ryder Cup style. Shared with the Cup page. */
 export function MatchCard({ match, zone }: { match: ComputedMatch; zone?: TeeZone | null }) {
+  const sides = sidesFromComputed(match);
   return (
-    <div className={`card match-card ${match.final ? 'match-final' : ''}`}>
-      <div className="match-sides">
-        <div className="match-side">
-          <span className="team-name" style={{ color: match.sideA.color }}>
-            {match.sideA.teamName}
-          </span>
-          {match.sideA.players.map((p) => (
-            <span key={p.playerId} className="player-name">
-              {p.name}
-              {p.effectiveHandicap > 0 && <em> +{p.effectiveHandicap}</em>}
-            </span>
-          ))}
-        </div>
-        <div className="match-vs">vs</div>
-        <div className="match-side right">
-          <span className="team-name" style={{ color: match.sideB.color }}>
-            {match.sideB.teamName}
-          </span>
-          {match.sideB.players.map((p) => (
-            <span key={p.playerId} className="player-name">
-              {p.name}
-              {p.effectiveHandicap > 0 && <em> +{p.effectiveHandicap}</em>}
-            </span>
-          ))}
-        </div>
+    <div className={`card rc-card ${match.final ? 'match-final' : ''}`}>
+      <MatchScoreboard
+        state={stateFromComputed(match)}
+        sideA={sides.A}
+        sideB={sides.B}
+        teeTime={match.teeTime ? localTime(match.teeTime, zone ?? null) : null}
+      />
+    </div>
+  );
+}
+
+/** The round's running score: points won so far, like a Ryder Cup session board. */
+function RoundScoreboard({ matches, teams }: { matches: ComputedMatch[]; teams: RyderTeam[] }) {
+  const a = teams.find((t) => t.id === 'A');
+  const b = teams.find((t) => t.id === 'B');
+  if (!a || !b) return null;
+  const sum = (pick: (m: ComputedMatch) => number) => matches.reduce((s, m) => s + pick(m), 0);
+  const ptsA = sum((m) => m.points.A);
+  const ptsB = sum((m) => m.points.B);
+  const projA = sum((m) => m.provisionalPoints.A);
+  const projB = sum((m) => m.provisionalPoints.B);
+  const finals = matches.filter((m) => m.final).length;
+  return (
+    <div className="card rc-session">
+      <div className="rc-session-team" style={{ color: a.color }}>
+        <span className="rc-session-name">{a.name}</span>
+        <span className="rc-session-pts">{fmtPoints(ptsA)}</span>
+        {projA !== ptsA && <span className="rc-session-proj">proj {fmtPoints(projA)}</span>}
       </div>
-      <div className="match-status">
-        <strong>{match.statusText}</strong>
-        {match.detail && (
-          <span className="muted">
-            {' '}
-            · {match.detail.totalA}–{match.detail.totalB} {match.detail.unit}
-          </span>
-        )}
-        {match.teeTime && <span className="muted"> · {withZone(match.teeTime, zone ?? null)}</span>}
+      <div className="rc-session-mid">
+        <span>{matches.length} matches</span>
+        <span>{finals === matches.length ? 'all final' : `${finals} final`}</span>
+      </div>
+      <div className="rc-session-team right" style={{ color: b.color }}>
+        <span className="rc-session-name">{b.name}</span>
+        <span className="rc-session-pts">{fmtPoints(ptsB)}</span>
+        {projB !== ptsB && <span className="rc-session-proj">proj {fmtPoints(projB)}</span>}
       </div>
     </div>
   );
 }
 
+/** Re-renders every few seconds so "updated Ns ago" keeps counting. */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
+
+function StatusBadge({ round }: { round: Round }) {
+  if (round.status === 'upcoming') return <span className="status-badge upcoming">Up next</span>;
+  return <span className={`status-badge ${round.status}`}>{statusLabel(round.status)}</span>;
+}
+
 export function MatchesPage() {
   const { roundId } = useParams();
   const trip = useTrip();
-  const activeRoundId = roundId ?? trip.data?.rounds[0]?.id;
-  const board = useRoundLeaderboard(activeRoundId);
-  const activeRound = trip.data?.rounds.find((r) => r.id === activeRoundId);
-  const qualifierZone = zoneFor(trip.data?.courses.find((c) => c.id === activeRound?.courseId));
+  const now = useNow(5000);
+
+  const allRounds = trip.data?.rounds ?? [];
+  // Only rounds that have started (plus the next one up) are offered — nobody
+  // needs an empty board for Monday on Saturday afternoon.
+  const visible = leaderboardRounds(allRounds);
+  const requested = visible.find((r) => r.id === roundId);
+  const activeRound = requested ?? defaultLeaderboardRound(visible);
+  const board = useRoundLeaderboard(activeRound?.id);
+  const zone = zoneFor(trip.data?.courses.find((c) => c.id === activeRound?.courseId));
 
   if (trip.isLoading) return <p className="muted">Loading…</p>;
 
+  const agoSec = board.dataUpdatedAt ? Math.max(0, Math.round((now - board.dataUpdatedAt) / 1000)) : null;
+
   return (
     <div className="page">
-      <h1>Round Leaderboards</h1>
-      <div className="chip-row">
-        {trip.data?.rounds.map((r, i) => (
-          <Link
-            key={r.id}
-            to={`/leaderboard/${r.id}`}
-            className={`chip ${r.id === activeRoundId ? 'active' : ''}`}
-          >
-            R{i + 1}
-          </Link>
-        ))}
+      <div className="page-head">
+        <h1>Leaderboard</h1>
+        <button
+          className="ghost refresh-btn"
+          onClick={() => void board.refetch()}
+          disabled={board.isFetching}
+          title="Refresh now"
+        >
+          {board.isFetching ? 'Updating…' : agoSec == null ? 'Refresh' : `Updated ${agoSec}s ago ↻`}
+        </button>
       </div>
+      {visible.length > 1 && (
+        <div className="chip-row">
+          {visible.map((r) => (
+            <Link
+              key={r.id}
+              to={`/leaderboard/${r.id}`}
+              className={`chip ${r.id === activeRound?.id ? 'active' : ''}`}
+            >
+              {roundShort(allRounds, r)}
+              {r.status === 'live' && <span className="chip-tag live">Live</span>}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {activeRound && (
+        <p className="muted">
+          <strong className="text">{roundNickname(activeRound)}</strong> · {activeRound.formatLabel}{' '}
+          <StatusBadge round={activeRound} />
+        </p>
+      )}
 
       {board.isLoading && <p className="muted">Loading leaderboard…</p>}
 
       {board.data?.type === 'qualifier' && (
         <>
-          <h2>{board.data.round.name}</h2>
-          <p className="muted">{board.data.round.formatLabel} — winners are the captains.</p>
           <p className="rule-line">
-            <strong>Handicaps:</strong> {handicapRule(board.data.round)}
+            <strong>Handicaps:</strong> {handicapRule(board.data.round)} · winners are the captains.
           </p>
           {board.data.rows.length === 0 && (
             <p className="muted">No pairings drawn yet. Admin runs the random draw.</p>
@@ -107,7 +169,7 @@ export function MatchesPage() {
                       {row.name}
                       <div className="muted small">
                         {row.players.map((p) => `${p.name} (${p.playingHandicap})`).join(' · ')}
-                        {row.teeTime ? ` · ${withZone(row.teeTime, qualifierZone)}` : ''}
+                        {row.teeTime ? ` · ${localTime(row.teeTime, zone)}` : ''}
                       </div>
                     </td>
                     <td>{row.thru || '—'}</td>
@@ -125,8 +187,9 @@ export function MatchesPage() {
 
       {board.data?.type === 'matches' && (
         <>
-          <h2>{board.data.round.name}</h2>
-          <p className="muted">{board.data.round.formatLabel}</p>
+          {board.data.matches.length > 0 && trip.data && (
+            <RoundScoreboard matches={board.data.matches} teams={trip.data.ryderTeams} />
+          )}
           <p className="rule-line">
             <strong>Handicaps:</strong> {handicapRule(board.data.round)}
           </p>
@@ -134,7 +197,7 @@ export function MatchesPage() {
             <p className="muted">Matches not set yet — captains submit lineups to the admins.</p>
           )}
           {board.data.matches.map((m) => (
-            <MatchCard key={m.id} match={m} zone={qualifierZone} />
+            <MatchCard key={m.id} match={m} zone={zone} />
           ))}
         </>
       )}

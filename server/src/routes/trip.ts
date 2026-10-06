@@ -35,6 +35,9 @@ tripRouter.get(
       pairings: db.pairings,
       ryderTeams: db.ryderTeams,
       matches: db.matches,
+      // Everyone signed in may see these (door codes for the houses etc.);
+      // the invite code + login is the gate, same as the rest of the trip.
+      settings: db.settings,
     });
   }),
 );

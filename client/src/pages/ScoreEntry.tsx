@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { enqueueScores, flushQueue, pendingScores } from '../api/queue';
 import { Course, Round } from '../api/types';
 import { useAuth } from '../auth';
+import { GroupScoreboard } from '../components/GroupScoreboard';
 import { HoleView } from '../components/HoleView';
 import { useScores, useTrip } from '../hooks';
 import { activeSessionRoundId, usePlaySession } from '../playSession';
+import { liveRound, roundShort, statusLabel } from '../rounds';
 import {
   Column,
   Group,
@@ -15,47 +17,7 @@ import {
   strokesForHole,
   totalYardsOf,
 } from '../scorecard';
-import { mountainEquivalentNote, withZone, zoneFor } from '../teeTimes';
-
-/** Per-player net/gross/thru cards, shared by both views. */
-function SummaryStrip({
-  course,
-  group,
-  valueFor,
-  isStableford,
-}: {
-  course: Course;
-  group: Group;
-  valueFor: ValueFor;
-  isStableford: boolean;
-}) {
-  return (
-    <div className="score-summary">
-      {group.columns.map((col) => {
-        const stats = statsFor(course, col, valueFor);
-        return (
-          <div className="summary-card" key={col.entityId}>
-            <div className="summary-name">{col.label}</div>
-            {stats.thru > 0 ? (
-              <>
-                <div className="summary-figures">
-                  <span className="summary-net">{stats.net}</span>
-                  <span className="summary-gross">net</span>
-                </div>
-                <div className="summary-thru">
-                  {stats.gross} gross · thru {stats.thru}
-                  {isStableford ? ` · ${stats.points} pt${stats.points === 1 ? '' : 's'}` : ''}
-                </div>
-              </>
-            ) : (
-              <div className="summary-thru">no scores yet</div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+import { courseClockNote, localTime, zoneFor } from '../teeTimes';
 
 /**
  * The full scorecard grid — every hole at once. Best for fixing up scores
@@ -84,12 +46,7 @@ function ScoreCard({
   return (
     <>
       {anyScores && (
-        <SummaryStrip
-          course={course}
-          group={group}
-          valueFor={valueFor}
-          isStableford={isStableford}
-        />
+        <GroupScoreboard course={course} round={round} group={group} valueFor={valueFor} />
       )}
 
       <div className="score-grid-wrap">
@@ -224,9 +181,7 @@ function StartRound({
   valueFor: ValueFor;
   onStart: () => void;
 }) {
-  const played = group.columns.some(
-    (col) => statsFor(course, col, valueFor).thru > 0,
-  );
+  const played = group.columns.some((col) => statsFor(course, col, valueFor).thru > 0);
   return (
     <>
       <div className="card start-card">
@@ -248,12 +203,7 @@ function StartRound({
         </p>
       </div>
       {played && (
-        <SummaryStrip
-          course={course}
-          group={group}
-          valueFor={valueFor}
-          isStableford={round.format === 'stableford'}
-        />
+        <GroupScoreboard course={course} round={round} group={group} valueFor={valueFor} />
       )}
     </>
   );
@@ -261,6 +211,7 @@ function StartRound({
 
 export function ScoreEntryPage() {
   const { auth } = useAuth();
+  const isAdmin = Boolean(auth?.player.isAdmin);
   const trip = useTrip();
   const queryClient = useQueryClient();
   // Come back to the round you're mid-way through, not always Round 1.
@@ -275,12 +226,18 @@ export function ScoreEntryPage() {
   const localRef = useRef<Record<string, number | null>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const rounds = trip.data?.rounds ?? [];
-  // Ignore a stored round id that isn't in this trip any more.
-  const activeRoundId = rounds.some((r) => r.id === roundId) ? roundId : (rounds[0]?.id ?? '');
+  const allRounds = trip.data?.rounds ?? [];
+  const live = liveRound(allRounds);
+  // Scoring is scoped to the round an admin has started. Admins can reach every
+  // round (to fix a card after the fact); everyone else only sees the live one.
+  const rounds = isAdmin ? allRounds : live ? [live] : [];
+  const activeRoundId = rounds.some((r) => r.id === roundId)
+    ? roundId
+    : (live?.id ?? rounds[0]?.id ?? '');
   const scores = useScores(activeRoundId || undefined);
   const round = rounds.find((r) => r.id === activeRoundId);
   const course = trip.data?.courses.find((c) => c.id === round?.courseId);
+  const zone = zoneFor(course);
   const { session, start, end, goToHole } = usePlaySession(
     activeRoundId,
     course?.holes.length ?? 18,
@@ -289,8 +246,8 @@ export function ScoreEntryPage() {
   const groups = useMemo(() => {
     if (!trip.data || !activeRoundId) return [];
     const r = trip.data.rounds.find((x) => x.id === activeRoundId);
-    const zone = zoneFor(trip.data.courses.find((c) => c.id === r?.courseId));
-    return buildGroups(trip.data, activeRoundId, (t) => withZone(t, zone));
+    const z = zoneFor(trip.data.courses.find((c) => c.id === r?.courseId));
+    return buildGroups(trip.data, activeRoundId, (t) => localTime(t, z));
   }, [trip.data, activeRoundId]);
 
   // Default to the group the signed-in player is in.
@@ -300,11 +257,12 @@ export function ScoreEntryPage() {
     const mine = groups.find((g) =>
       g.columns.some(
         (c) =>
-          (c.entityType === 'player' && c.entityId === auth?.player.id) || c.entityType === 'side',
+          (c.entityType === 'player' && c.entityId === auth?.player.id) ||
+          (c.entityType === 'side' && g.match?.namesA.concat(g.match.namesB).includes(auth?.player.name ?? '')),
       ),
     );
     setGroupId((mine ?? groups[0]).id);
-  }, [groups, groupId, auth?.player.id]);
+  }, [groups, groupId, auth?.player.id, auth?.player.name]);
 
   const group = groups.find((g) => g.id === groupId);
   const totalYards = course ? totalYardsOf(course) : null;
@@ -394,38 +352,62 @@ export function ScoreEntryPage() {
 
   if (trip.isLoading) return <p className="muted">Loading…</p>;
 
+  // Nothing live yet and you're not an admin: nothing to score.
+  if (!round) {
+    return (
+      <div className="page">
+        <h1>Scores</h1>
+        <div className="card start-card">
+          <h2>No round in progress</h2>
+          <p className="muted small">
+            An admin starts each round when it&apos;s time to tee off, and your scorecard shows up
+            here. Until then, the Trip tab has the schedule and the Leaderboard has results so far.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const clockNote = course ? courseClockNote(round.teeTimes, zone) : null;
+
   return (
     <div className="page">
       {/* Out on the course the screen belongs to the hole in front of you: no
           round switcher, no group picker, no course blurb. Those all come back
           on the full card, which is also the way out of play mode. */}
       {inPlay ? (
-        <h1 className="play-title">
-          {round?.name}
-          <span className="muted"> · {round?.formatLabel.split('—')[0].trim()}</span>
-        </h1>
+        <p className="play-context muted small">
+          {course?.name} · {round.formatLabel.split('—')[0].trim()}
+        </p>
       ) : (
         <>
           <h1>Scores</h1>
-          <div className="chip-row">
-            {rounds.map((r, i) => (
-              <button
-                key={r.id}
-                className={`chip ${r.id === activeRoundId ? 'active' : ''}`}
-                onClick={() => {
-                  setRoundId(r.id);
-                  setGroupId('');
-                  localRef.current = {};
-                  setLocal({});
-                }}
-              >
-                R{i + 1}
-              </button>
-            ))}
-          </div>
+          {isAdmin && rounds.length > 1 && (
+            <div className="chip-row">
+              {rounds.map((r) => (
+                <button
+                  key={r.id}
+                  className={`chip ${r.id === activeRoundId ? 'active' : ''}`}
+                  onClick={() => {
+                    setRoundId(r.id);
+                    setGroupId('');
+                    localRef.current = {};
+                    setLocal({});
+                  }}
+                >
+                  {roundShort(rounds, r)}
+                  {r.status !== 'upcoming' && (
+                    <span className={`chip-tag ${r.status}`}>{statusLabel(r.status)}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
 
           <p className="muted">
-            {round?.name} · {round?.formatLabel}
+            {round.formatLabel}
+            {round.status === 'live' && <span className="status-badge live">Live</span>}
+            {round.status === 'final' && <span className="status-badge final">Final</span>}
           </p>
 
           {course && (
@@ -445,9 +427,7 @@ export function ScoreEntryPage() {
             </div>
           )}
 
-          {round && course && mountainEquivalentNote(round.teeTimes, zoneFor(course)) && (
-            <p className="tz-note">⏰ {mountainEquivalentNote(round.teeTimes, zoneFor(course))}</p>
-          )}
+          {clockNote && <p className="tz-note">⏰ {clockNote}</p>}
 
           {groups.length === 0 && (
             <p className="muted">
@@ -471,7 +451,7 @@ export function ScoreEntryPage() {
         </>
       )}
 
-      {group && course && round && (
+      {group && course && (
         <>
           <div className="chip-row view-toggle">
             <button

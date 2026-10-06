@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { asyncHandler, HttpError } from '../middleware/error';
+import { syncMatchClosures } from '../services/matchClosures';
 import { prisma } from '../store/prisma';
 
 export const scoresRouter = Router();
@@ -72,6 +73,14 @@ scoresRouter.post(
         applied += 1;
       }
     });
+    // Stamp any match these scores just finished (or re-opened). Done after the
+    // write, and the response doesn't wait on it — a failure here must never
+    // make a phone think its scores didn't land. The request/response shape
+    // above is unchanged: old app versions replay their queues through it.
+    const touched = body.scores.map((s) => s.roundId).filter((id) => roundIds.has(id));
+    void syncMatchClosures(touched).catch((err) =>
+      req.log.error({ err }, 'failed to sync match closures'),
+    );
     res.json({ ok: true, applied });
   }),
 );

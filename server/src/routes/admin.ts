@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from '../middleware/auth';
 import { asyncHandler, HttpError } from '../middleware/error';
+import { syncMatchClosures } from '../services/matchClosures';
 import { prisma } from '../store/prisma';
 import { resetAndReseed } from '../store/seed';
 
@@ -131,6 +132,67 @@ adminRouter.put(
       }
       throw err;
     }
+    res.json({ ok: true });
+  }),
+);
+
+const RoundStatusUpdate = z.object({ status: z.enum(['upcoming', 'live', 'final']) });
+
+/**
+ * Start / end / reopen a round. Only one round is live at a time: starting one
+ * marks any other live round final, so the "live round" everyone scores is
+ * never ambiguous. Timestamps record when it happened.
+ */
+adminRouter.put(
+  '/rounds/:id/status',
+  asyncHandler(async (req, res) => {
+    const { status } = RoundStatusUpdate.parse(req.body);
+    const round = await prisma.round.findUnique({ where: { id: req.params.id } });
+    if (!round) throw new HttpError(404, 'Round not found');
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      if (status === 'live') {
+        await tx.round.updateMany({
+          where: { status: 'live', NOT: { id: round.id } },
+          data: { status: 'final', endedAt: now },
+        });
+      }
+      await tx.round.update({
+        where: { id: round.id },
+        data: {
+          status,
+          ...(status === 'live' && { startedAt: round.startedAt ?? now, endedAt: null }),
+          ...(status === 'final' && { startedAt: round.startedAt ?? now, endedAt: now }),
+          ...(status === 'upcoming' && { startedAt: null, endedAt: null }),
+        },
+      });
+    });
+    res.json({ ok: true, rounds: await prisma.round.findMany({ orderBy: { id: 'asc' } }) });
+  }),
+);
+
+// ── Settings (lodging door codes etc.) ─────────────────────────────────────
+
+const SettingsUpdate = z.object({
+  settings: z.record(z.string().min(1).max(64), z.string().max(2000)),
+});
+
+/** Upsert key/value settings; an empty value deletes the key. */
+adminRouter.put(
+  '/settings',
+  asyncHandler(async (req, res) => {
+    const { settings } = SettingsUpdate.parse(req.body);
+    await prisma.$transaction(
+      Object.entries(settings).map(([key, value]) =>
+        value.trim() === ''
+          ? prisma.setting.deleteMany({ where: { key } })
+          : prisma.setting.upsert({
+              where: { key },
+              update: { value: value.trim() },
+              create: { key, value: value.trim() },
+            }),
+      ),
+    );
     res.json({ ok: true });
   }),
 );
@@ -266,6 +328,7 @@ adminRouter.put(
           sideA: m.sideA,
           sideB: m.sideB,
           result: existing.find((e) => e.id === m.id)?.result ?? null,
+          closedAt: existing.find((e) => e.id === m.id)?.closedAt ?? null,
         })),
       });
       return tx.match.findMany({ where: { roundId: body.roundId } });
@@ -307,14 +370,21 @@ adminRouter.put(
   '/matches/:id/result',
   asyncHandler(async (req, res) => {
     const body = ResultUpdate.parse(req.body);
+    let roundId: string;
     try {
-      await prisma.match.update({ where: { id: req.params.id }, data: { result: body.result } });
+      const updated = await prisma.match.update({
+        where: { id: req.params.id },
+        data: { result: body.result },
+      });
+      roundId = updated.roundId;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
         throw new HttpError(404, 'Match not found');
       }
       throw err;
     }
+    // An override closes the match (or clearing one may re-open it).
+    await syncMatchClosures([roundId]);
     res.json({ ok: true });
   }),
 );

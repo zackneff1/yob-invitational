@@ -46,6 +46,10 @@ model Round {
   playOffLow  Boolean
   matchCount  Int
   description String
+  /// 'upcoming' | 'live' | 'final' — admins start and end rounds from the Admin tab.
+  status      String    @default("upcoming")
+  startedAt   DateTime?
+  endedAt     DateTime?
 
   course   Course    @relation(fields: [courseId], references: [id])
   pairings Pairing[]
@@ -80,6 +84,8 @@ model Match {
   sideA   String[]
   sideB   String[]
   result  String? // 'A' | 'B' | 'HALVED' — admin override
+  /// Stamped the first time the match is seen final; drives the "match closed" alerts.
+  closedAt DateTime?
 
   round Round @relation(fields: [roundId], references: [id])
 
@@ -99,4 +105,11 @@ model Score {
   editor Player @relation(fields: [updatedBy], references: [id])
 
   @@id([roundId, entityType, entityId, hole])
+}
+
+/// Small key/value store for trip info that must not live in the (public) source
+/// repo and needs no table of its own — lodging door codes, for example.
+model Setting {
+  key   String @id
+  value String
 }

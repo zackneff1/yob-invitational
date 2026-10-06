@@ -9,6 +9,8 @@ export function seedCourses(): Course[] {
 }
 
 export function seedRounds(): Round[] {
+  // Every round starts out 'upcoming'; admins start and end them from Admin → Rounds.
+  const fresh = { status: 'upcoming' as const, startedAt: null, endedAt: null };
   return [
     {
       id: 'r1-conestoga',
@@ -24,6 +26,7 @@ export function seedRounds(): Round[] {
       matchCount: 0,
       description:
         'Randomly drawn two-man best ball teams, net stroke play. The winning team become the two captains. Live draft after the round.',
+      ...fresh,
     },
     {
       id: 'r2-coral-canyon',
@@ -39,6 +42,7 @@ export function seedRounds(): Round[] {
       matchCount: 3,
       description:
         'Four-ball (best ball) match play, 2v2 — better net ball on each hole wins the hole.',
+      ...fresh,
     },
     {
       id: 'r3-ledges',
@@ -54,6 +58,7 @@ export function seedRounds(): Round[] {
       matchCount: 3,
       description:
         'Both partners score Stableford points on every hole (net double bogey 0, bogey 1, par 2, birdie 3, eagle 4). Team total decides the match.',
+      ...fresh,
     },
     {
       id: 'r4-sh-links',
@@ -69,6 +74,7 @@ export function seedRounds(): Round[] {
       matchCount: 3,
       description:
         'Two-man scramble over 9 holes, head to head net.',
+      ...fresh,
     },
     {
       id: 'r5-sh-champ',
@@ -84,6 +90,7 @@ export function seedRounds(): Round[] {
       matchCount: 6,
       description:
         'Head-to-head singles match play at Sand Hollow Championship. 6 points on the board — the closer.',
+      ...fresh,
     },
   ];
 }
@@ -121,7 +128,9 @@ async function insertSeedData(tx: Prisma.TransactionClient): Promise<void> {
       holes: c.holes as unknown as Prisma.InputJsonValue,
     })),
   });
-  await tx.round.createMany({ data: seedRounds() });
+  await tx.round.createMany({
+    data: seedRounds().map((r) => ({ ...r, startedAt: null, endedAt: null })),
+  });
   await tx.ryderTeam.createMany({
     data: [
       { id: 'A', name: 'Team A', color: '#1d4ed8', captainId: null, playerIds: [] },
@@ -163,6 +172,7 @@ export async function resetAndReseed(
     await tx.course.deleteMany();
     await tx.ryderTeam.deleteMany();
     await tx.player.deleteMany();
+    // Settings (lodging door codes etc.) deliberately survive a reset.
     await insertSeedData(tx);
     const restoredLogins: string[] = [];
     for (const login of logins) {

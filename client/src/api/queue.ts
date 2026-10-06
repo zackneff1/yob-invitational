@@ -14,6 +14,13 @@ export interface ScoreInput {
 
 const QUEUE_KEY = 'yob.scoreQueue.v1';
 const CHANGED_EVENT = 'yob-queue-changed';
+/** Fired after a batch of scores has actually reached the server. */
+const SYNCED_EVENT = 'yob-scores-synced';
+
+export function onScoresSynced(listener: () => void): () => void {
+  window.addEventListener(SYNCED_EVENT, listener);
+  return () => window.removeEventListener(SYNCED_EVENT, listener);
+}
 
 function keyOf(e: ScoreInput): string {
   return `${e.roundId}|${e.entityType}|${e.entityId}|${e.hole}`;
@@ -74,6 +81,8 @@ export async function flushQueue(): Promise<boolean> {
       if (queue[key] && queue[key].updatedAt <= entry.updatedAt) delete queue[key];
     }
     write(queue);
+    // Whoever is listening (the app shell) refetches leaderboards now.
+    window.dispatchEvent(new Event(SYNCED_EVENT));
     return Object.keys(queue).length === 0;
   } catch {
     return false;

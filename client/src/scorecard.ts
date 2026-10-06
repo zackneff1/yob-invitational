@@ -1,6 +1,7 @@
 // Shared scorecard logic used by both score-entry views: the hole-by-hole
 // play view and the full-card grid.
 import { Course, Hole, Round, Trip } from './api/types';
+import { MatchState, ScoreboardSide } from './matchState';
 
 export interface Column {
   entityType: 'player' | 'side';
@@ -11,12 +12,25 @@ export interface Column {
   effectiveHandicap: number;
 }
 
+export interface MatchSides {
+  /** Entity ids (player ids, or `${matchId}:A` for a scramble side) per side. */
+  sideA: string[];
+  sideB: string[];
+  teamA: string;
+  teamB: string;
+  colorA: string;
+  colorB: string;
+  /** Player names per side — for scramble, where the columns are the sides. */
+  namesA: string[];
+  namesB: string[];
+}
+
 export interface Group {
   id: string;
   label: string;
   columns: Column[];
   /** Ryder Cup rounds: how this group's columns split into the two sides. */
-  match?: { sideA: string[]; sideB: string[]; teamA: string; teamB: string };
+  match?: MatchSides;
   /** Round 1 qualifier: the best-ball pairs inside this tee-time group. */
   pairs?: { name: string; entityIds: string[] }[];
 }
@@ -141,10 +155,20 @@ export function buildGroups(
   }
 
   const matches = trip.matches.filter((m) => m.roundId === roundId);
-  const teamName = (side: 'A' | 'B') => trip.ryderTeams.find((t) => t.id === side)?.name ?? side;
+  const teamOf = (side: 'A' | 'B') => trip.ryderTeams.find((t) => t.id === side);
+  const teamName = (side: 'A' | 'B') => teamOf(side)?.name ?? side;
+  const teamColor = (side: 'A' | 'B') => teamOf(side)?.color ?? '#94a3b8';
 
   return matches.map((m, i) => {
     const label = `Match ${i + 1}: ${m.sideA.map(nameOf).join('/')} vs ${m.sideB.map(nameOf).join('/')}`;
+    const common = {
+      teamA: teamName('A'),
+      teamB: teamName('B'),
+      colorA: teamColor('A'),
+      colorB: teamColor('B'),
+      namesA: m.sideA.map(nameOf),
+      namesB: m.sideB.map(nameOf),
+    };
     if (round.format === 'scramble') {
       // Sides play off the lower team handicap, as the server does.
       const thA = teamHandicapOf(m.sideA);
@@ -167,12 +191,7 @@ export function buildGroups(
             effectiveHandicap: thB - low,
           },
         ],
-        match: {
-          sideA: [`${m.id}:A`],
-          sideB: [`${m.id}:B`],
-          teamA: teamName('A'),
-          teamB: teamName('B'),
-        },
+        match: { ...common, sideA: [`${m.id}:A`], sideB: [`${m.id}:B`] },
       };
     }
     // Four-ball, Stableford and singles: strokes are worked out across the
@@ -188,7 +207,7 @@ export function buildGroups(
         label: nameOf(pid),
         effectiveHandicap: eff.get(pid) ?? 0,
       })),
-      match: { sideA: m.sideA, sideB: m.sideB, teamA: teamName('A'), teamB: teamName('B') },
+      match: { ...common, sideA: m.sideA, sideB: m.sideB },
     };
   });
 }
@@ -198,63 +217,78 @@ function fmtToPar(toPar: number): string {
   return toPar > 0 ? `+${toPar}` : `${toPar}`;
 }
 
+function netOnHole(course: Course, col: Column, hole: Hole, valueFor: ValueFor): number | null {
+  const gross = valueFor(col, hole.number);
+  return typeof gross === 'number' ? gross - strokesForHole(course, col, hole) : null;
+}
+
 /**
- * Where the match/round stands right now, from the scores on this phone.
- *
- * Hand-mirrored from `computeMatch` / `qualifierLeaderboard` in
- * server/src/services/leaderboard.ts, for the same reason the stroke maths is
- * mirrored: out on the course there may be no signal, and a status fetched
- * from the server would be stale the moment someone holes a putt. The server
- * remains the authority for actual Cup points — this is the live read-out
- * only, so if the scoring rules change on the server, change this with them.
+ * Round 1 read-out: net best ball against par, one per pair in the group.
+ * Mirrors `qualifierLeaderboard` on the server.
  */
-export function liveStatus(
+export function qualifierStatus(course: Course, group: Group, valueFor: ValueFor): string | null {
+  if (!group.pairs?.length) return null;
+  const colOf = (id: string) => group.columns.find((c) => c.entityId === id);
+  const parts = group.pairs
+    .map((pair) => {
+      const cols = pair.entityIds.map(colOf).filter((c): c is Column => Boolean(c));
+      let net = 0;
+      let par = 0;
+      let thru = 0;
+      for (const hole of course.holes) {
+        const nets = cols
+          .map((c) => netOnHole(course, c, hole, valueFor))
+          .filter((v): v is number => v != null);
+        if (!nets.length) continue;
+        thru += 1;
+        par += hole.par;
+        net += Math.min(...nets);
+      }
+      return { name: pair.name, toPar: net - par, thru };
+    })
+    .filter((p) => p.thru > 0);
+  if (!parts.length) return null;
+  return parts.map((p) => `${p.name} ${fmtToPar(p.toPar)} thru ${p.thru}`).join('  ·  ');
+}
+
+/**
+ * Where a Ryder Cup match stands right now, from the scores on this phone.
+ *
+ * Hand-mirrored from `computeMatch` in server/src/services/leaderboard.ts, for
+ * the same reason the stroke maths is mirrored: out on the course there may be
+ * no signal, and a status fetched from the server would be stale the moment
+ * someone holes a putt. The server remains the authority for actual Cup
+ * points — this is the live read-out only, so if the scoring rules change on
+ * the server, change this with them.
+ */
+export function liveMatchState(
   course: Course,
   round: Round,
   group: Group,
   valueFor: ValueFor,
-): string | null {
+): MatchState | null {
   const holeCount = course.holes.length;
-  const colOf = (id: string) => group.columns.find((c) => c.entityId === id);
-  const netOn = (col: Column, hole: Hole): number | null => {
-    const gross = valueFor(col, hole.number);
-    return typeof gross === 'number' ? gross - strokesForHole(course, col, hole) : null;
-  };
-
-  // Round 1: net best ball against par, one read-out per pair.
-  if (round.format === 'bestball-qualifier') {
-    if (!group.pairs?.length) return null;
-    const parts = group.pairs
-      .map((pair) => {
-        const cols = pair.entityIds.map(colOf).filter((c): c is Column => Boolean(c));
-        let net = 0;
-        let par = 0;
-        let thru = 0;
-        for (const hole of course.holes) {
-          const nets = cols.map((c) => netOn(c, hole)).filter((v): v is number => v != null);
-          if (!nets.length) continue;
-          thru += 1;
-          par += hole.par;
-          net += Math.min(...nets);
-        }
-        return { name: pair.name, toPar: net - par, thru };
-      })
-      .filter((p) => p.thru > 0);
-    if (!parts.length) return null;
-    return parts.map((p) => `${p.name} ${fmtToPar(p.toPar)} thru ${p.thru}`).join('  ·  ');
-  }
-
   const m = group.match;
   if (!m) return null;
+  const colOf = (id: string) => group.columns.find((c) => c.entityId === id);
   const colsA = m.sideA.map(colOf).filter((c): c is Column => Boolean(c));
   const colsB = m.sideB.map(colOf).filter((c): c is Column => Boolean(c));
   if (!colsA.length || !colsB.length) return null;
+  const netOn = (col: Column, hole: Hole) => netOnHole(course, col, hole, valueFor);
+
+  const state: MatchState = {
+    format: round.format,
+    thru: 0,
+    holeCount,
+    leader: null,
+    margin: 0,
+    final: false,
+    closeoutRemaining: 0,
+  };
 
   if (round.format === 'fourball' || round.format === 'singles') {
     let diff = 0; // positive = side A up
-    let thru = 0;
     let decided = false;
-    let closeoutRemaining = 0;
     for (const hole of course.holes) {
       const netsA = colsA.map((c) => netOn(c, hole)).filter((v): v is number => v != null);
       const netsB = colsB.map((c) => netOn(c, hole)).filter((v): v is number => v != null);
@@ -263,64 +297,86 @@ export function liveStatus(
       const bestB = Math.min(...netsB);
       if (bestA < bestB) diff += 1;
       else if (bestB < bestA) diff -= 1;
-      thru += 1;
-      const remaining = holeCount - thru;
+      state.thru += 1;
+      const remaining = holeCount - state.thru;
       if (Math.abs(diff) > remaining) {
         decided = true;
-        closeoutRemaining = remaining;
+        state.closeoutRemaining = remaining;
         break;
       }
     }
-    if (thru === 0) return null;
-    const margin = Math.abs(diff);
-    const leaderName = diff > 0 ? m.teamA : m.teamB;
-    if (decided) {
-      return closeoutRemaining > 0
-        ? `${leaderName} wins ${margin}&${closeoutRemaining}`
-        : `${leaderName} wins ${margin} UP`;
-    }
-    if (thru === holeCount) return diff === 0 ? 'Halved' : `${leaderName} wins ${margin} UP`;
-    return diff === 0 ? `All square thru ${thru}` : `${leaderName} ${margin} UP thru ${thru}`;
+    state.margin = Math.abs(diff);
+    state.leader = diff > 0 ? 'A' : diff < 0 ? 'B' : null;
+    state.final = decided || state.thru === holeCount;
+    return state;
   }
 
   if (round.format === 'stableford') {
     let ptsA = 0;
     let ptsB = 0;
-    let thru = 0;
     for (const hole of course.holes) {
       const netsA = colsA.map((c) => netOn(c, hole));
       const netsB = colsB.map((c) => netOn(c, hole));
       // A hole only counts once everyone in the match has scored it.
       if ([...netsA, ...netsB].some((v) => v == null)) continue;
-      thru += 1;
+      state.thru += 1;
       ptsA += (netsA as number[]).reduce((s, v) => s + stablefordPoints(v, hole.par), 0);
       ptsB += (netsB as number[]).reduce((s, v) => s + stablefordPoints(v, hole.par), 0);
     }
-    if (thru === 0) return null;
-    const margin = Math.abs(ptsA - ptsB);
-    if (margin === 0) return `Tied ${ptsA}–${ptsB} pts thru ${thru}`;
-    const leaderName = ptsA > ptsB ? m.teamA : m.teamB;
-    return `${leaderName} up ${margin} pts (${ptsA}–${ptsB}) thru ${thru}`;
+    state.margin = Math.abs(ptsA - ptsB);
+    state.leader = ptsA > ptsB ? 'A' : ptsB > ptsA ? 'B' : null;
+    state.final = state.thru === holeCount;
+    state.totals = { A: ptsA, B: ptsB, unit: 'pts' };
+    return state;
   }
 
   if (round.format === 'scramble') {
     let netA = 0;
     let netB = 0;
-    let thru = 0;
     for (const hole of course.holes) {
       const a = netOn(colsA[0], hole);
       const b = netOn(colsB[0], hole);
       if (a == null || b == null) continue;
-      thru += 1;
+      state.thru += 1;
       netA += a;
       netB += b;
     }
-    if (thru === 0) return null;
-    const margin = Math.abs(netA - netB);
-    if (margin === 0) return `Tied at ${netA} net thru ${thru}`;
-    const leaderName = netA < netB ? m.teamA : m.teamB;
-    return `${leaderName} by ${margin} thru ${thru}`;
+    state.margin = Math.abs(netA - netB);
+    state.leader = netA < netB ? 'A' : netB < netA ? 'B' : null;
+    state.final = state.thru === holeCount;
+    state.totals = { A: netA, B: netB, unit: 'net' };
+    return state;
   }
 
   return null;
+}
+
+/** The two sides of a match group, shaped for the scoreboard. */
+export function scoreboardSides(group: Group): { A: ScoreboardSide; B: ScoreboardSide } | null {
+  const m = group.match;
+  if (!m) return null;
+  const isScramble = m.sideA.length === 1 && m.sideA[0].endsWith(':A');
+  const side = (ids: string[], names: string[], name: string, color: string): ScoreboardSide => {
+    if (isScramble) {
+      const col = group.columns.find((c) => c.entityId === ids[0]);
+      return {
+        name,
+        color,
+        players: names.map((label) => ({ label, strokes: 0 })),
+        strokes: col?.effectiveHandicap ?? 0,
+      };
+    }
+    return {
+      name,
+      color,
+      players: ids.map((id) => {
+        const col = group.columns.find((c) => c.entityId === id);
+        return { label: col?.label ?? id, strokes: col?.effectiveHandicap ?? 0 };
+      }),
+    };
+  };
+  return {
+    A: side(m.sideA, m.namesA, m.teamA, m.colorA),
+    B: side(m.sideB, m.namesB, m.teamB, m.colorB),
+  };
 }

@@ -19,7 +19,7 @@ A trip app for the 2026 Yob Invitational — a 12-man Ryder Cup–style golf wee
 
 ## The one thing to get right: code vs. data
 
-**Most "changes" Aaron wants are probably data, not code.** Handicaps, pairings, teams, match lineups, course ratings/slopes/stroke indexes, and score corrections are all edited **inside the app** — sign in as an admin and use the **Admin** tab. The production database lives on Render; editing `server/src/store/seed.ts` will NOT change the live site (seed data only populates a brand-new empty database).
+**Most "changes" Aaron wants are probably data, not code.** Handicaps, pairings, teams, match lineups, course ratings/slopes/stroke indexes, score corrections, **starting and ending rounds** (Admin → rounds — everyone's Score tab only shows the live round), and the **Airbnb door codes** (Admin → lodging — kept out of this public repo on purpose) are all edited **inside the app** — sign in as an admin and use the **Admin** tab. The production database lives on Render; editing `server/src/store/seed.ts` will NOT change the live site (seed data only populates a brand-new empty database).
 
 Code changes are for things like: wording/text, colors and styling, layout tweaks, new pages or features, changes to scoring rules or formats.
 

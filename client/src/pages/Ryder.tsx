@@ -1,6 +1,14 @@
 import { useRyderBoard, useTrip } from '../hooks';
-import { MatchCard } from './Matches';
+import { statusLabel } from '../rounds';
 import { zoneFor } from '../teeTimes';
+import { MatchCard } from './Matches';
+
+function fmtPoints(p: number): string {
+  const whole = Math.floor(p);
+  const half = p - whole === 0.5;
+  if (whole === 0 && half) return '½';
+  return `${whole}${half ? '½' : ''}`;
+}
 
 export function RyderPage() {
   const board = useRyderBoard();
@@ -19,17 +27,21 @@ export function RyderPage() {
       <div className="cup-score card">
         <div className="cup-team" style={{ color: a.color }}>
           <span className="cup-name">{a.name}</span>
-          <span className="cup-points">{a.points}</span>
-          {a.provisional !== a.points && <span className="muted small">({a.provisional} proj.)</span>}
+          <span className="cup-points">{fmtPoints(a.points)}</span>
+          {a.provisional !== a.points && (
+            <span className="muted small">({fmtPoints(a.provisional)} proj.)</span>
+          )}
         </div>
         <div className="cup-mid">
-          <span className="muted small">first to {pointsToWin}</span>
+          <span className="muted small">first to {fmtPoints(pointsToWin)}</span>
           <span className="muted small">{totalPoints} pts total</span>
         </div>
         <div className="cup-team" style={{ color: b.color }}>
           <span className="cup-name">{b.name}</span>
-          <span className="cup-points">{b.points}</span>
-          {b.provisional !== b.points && <span className="muted small">({b.provisional} proj.)</span>}
+          <span className="cup-points">{fmtPoints(b.points)}</span>
+          {b.provisional !== b.points && (
+            <span className="muted small">({fmtPoints(b.provisional)} proj.)</span>
+          )}
         </div>
       </div>
       <div className="cup-bar">
@@ -58,7 +70,14 @@ export function RyderPage() {
         const zone = zoneFor(trip.data?.courses.find((c) => c.id === tripRound?.courseId));
         return (
           <section key={round.roundId}>
-            <h2>{round.roundName}</h2>
+            <h2>
+              {round.roundName}
+              {round.roundStatus !== 'upcoming' && (
+                <span className={`status-badge ${round.roundStatus}`}>
+                  {statusLabel(round.roundStatus)}
+                </span>
+              )}
+            </h2>
             {round.matches.length === 0 && <p className="muted">Matches not set.</p>}
             {round.matches.map((m) => (
               <MatchCard key={m.id} match={m} zone={zone} />
